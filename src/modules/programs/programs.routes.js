@@ -4,6 +4,7 @@ import {
     getMyPrograms,
     getProgram,
     postProgram,
+    putProgram,
     removeProgram,
     postForkProgram,
 } from './programs.controller.js';
@@ -15,6 +16,7 @@ router.use(authGuard);
 router.get('/', getMyPrograms);
 router.get('/:id', getProgram);
 router.post('/', postProgram);
+router.put('/:id', putProgram);
 router.delete('/:id', removeProgram);
 router.post('/:id/fork', postForkProgram);
 

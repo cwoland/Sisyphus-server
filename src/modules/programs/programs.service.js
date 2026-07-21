@@ -1,5 +1,5 @@
 import { query, pool } from '../../config/db.js';
-import { apiError } from '../../utils/apiError.js';
+import { ApiError } from '../../utils/apiError.js';
 
 export const listUserPrograms = async (userId) => {
     const { rows } = await query(
@@ -16,9 +16,9 @@ export const getProgramWithDays = async (programId, userId) => {
     );
     const program = programRows[0];
 
-    if (!program) throw new apiError(404, 'Программа не найдена');
+    if (!program) throw new ApiError(404, 'Программа не найдена');
     if (program.owner_id !== userId && !program.is_public) {
-        throw new apiError(403, 'Нет доступа к этой программе');
+        throw new ApiError(403, 'Нет доступа к этой программе');
     }
 
     const { rows: days } = await query(
@@ -102,14 +102,14 @@ export const deleteProgram = async (programId, userId) => {
         `DELETE FROM programs WHERE id = $1 AND owner_id = $2 RETURNING id`,
         [programId, userId]
     );
-    if (!rows.length) throw new apiError(404, 'Программа не найдена или нет доступа');
+    if (!rows.length) throw new ApiError(404, 'Программа не найдена или нет доступа');
 };
 
 export const forkProgram = async (programId, userId) => {
     const original = await getProgramWithDays(programId, userId);
 
     if (!original.is_public && original.owner_id !== userId) {
-        throw new apiError(403, 'Нет доступа к этой программе');
+        throw new ApiError(403, 'Нет доступа к этой программе');
     }
 
     return createProgram({
@@ -130,4 +130,52 @@ export const forkProgram = async (programId, userId) => {
         await query(`UPDATE programs SET forked_from = $1 WHERE id = $2`, [programId, newProgram.id]);
         return newProgram;
     });
+};
+
+export const updateProgram = async (programId, userId, { title, description, isPublic, days }) => {
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const { rows: owned } = await client.query(
+            `SELECT id FROM programs WHERE id = $1 AND owner_id = $2`,
+            [programId, userId]
+        );
+        if (!owned.length) throw new ApiError(404, 'Программа не найдена или нет прав доступа');
+
+        await client.query(
+            `UPDATE programs SET title = $1, description = $2, is_public = $3, updated_at = now()
+            WHERE id = $4`,
+            [title, description ?? null, isPublic ?? false, programId]
+        );
+
+        await client.query(`DELETE FROM program_days WHERE program_id = $1`, [programId]);
+
+        for (const [dayIndex, day] of days.entries()) {
+            const { rows: dayRows } = await client.query(
+                `INSERT INTO program_days (program_id, day_index, title)
+                VALUES ($1, $2, $3) RETURNING *`,
+                [programId, dayIndex, day.title]
+            );
+            const createdDay = dayRows[0];
+
+            for (const [exIndex, ex] of day.exercises.entries()) {
+                await client.query(
+                    `INSERT INTO program_exercises
+                       (program_day_id, exercise_id, order_index, target_sets, target_reps, notes)
+                       VALUES ($1, $2, $3, $4, $5, $6)`,
+                       [createdDay.id, ex.exerciseId, exIndex, ex.targetSets, ex.targetReps, ex.notes ?? null]
+                );
+            }
+        }
+
+        await client.query('COMMIT');
+        return getProgramWithDays(programId, userId);
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
 };

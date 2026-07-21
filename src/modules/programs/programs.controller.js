@@ -6,6 +6,7 @@ import {
   createProgram,
   deleteProgram,
   forkProgram,
+  updateProgram,
 } from './programs.service.js';
 
 const exerciseSchema = z.object({
@@ -41,6 +42,12 @@ export const postProgram = asyncHandler(async (req, res) => {
   const data = createProgramSchema.parse(req.body);
   const program = await createProgram({ ownerId: req.userId, ...data });
   res.status(201).json({ program });
+});
+
+export const putProgram = asyncHandler(async (req, res) => {
+  const data = createProgramSchema.parse(req.body);
+  const program = await updateProgram(req.params.id, req.userId, data);
+  res.json({ program });
 });
 
 export const removeProgram = asyncHandler(async (req, res) => {

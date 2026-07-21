@@ -1,5 +1,5 @@
 import { query, pool } from '../../config/db.js';
-import { apiError } from '../../utils/apiError.js';
+import { ApiError } from '../../utils/apiError.js';
 
 export const listWorkouts = async (userId, { from, to }) => {
   const conditions = ['user_id = $1'];
@@ -27,7 +27,7 @@ export const getWorkoutWithSets = async (workoutId, userId) => {
     [workoutId, userId]
   );
   const workout = workoutRows[0];
-  if (!workout) throw new apiError(404, 'Тренировка не найдена');
+  if (!workout) throw new ApiError(404, 'Тренировка не найдена');
 
   const { rows: sets } = await query(
     `SELECT ws.*, e.name AS exercise_name, e.muscle_group
@@ -51,7 +51,7 @@ export const createWorkout = async ({ userId, title, date, notes }) => {
   return rows[0];
 };
 
-export const scheduleProgramToCalendar = async ({ userId, programId, startDate, cyclesCount }) => {
+export const scheduleProgramToCalendar = async ({ userId, programId, startDate, weekdays, weeksCount }) => {
   const client = await pool.connect();
 
   try {
@@ -61,35 +61,39 @@ export const scheduleProgramToCalendar = async ({ userId, programId, startDate, 
       `SELECT * FROM programs WHERE id = $1 AND owner_id = $2`,
       [programId, userId]
     );
-    if (!programRows.length) throw new apiError(404, 'Программа не найдена');
+    if (!programRows.length) throw new ApiError(404, 'Программа не найдена');
 
     const { rows: days } = await client.query(
       `SELECT * FROM program_days WHERE program_id = $1 ORDER BY day_index ASC`,
       [programId]
     );
-    if (!days.length) throw new apiError(400, 'В программе нет дней для планирования');
+    if (!days.length) throw new ApiError(400, 'В программе нет дней для планирования');
+    if (!weekdays?.length) throw new ApiError(400, 'Не выбраны тренировочные дни');
 
-    const createdWorkouts = [];
-    let currentDate = new Date(startDate);
+    const created = [];
+    const totalDays = weeksCount * 7;
+    const cursor = new Date(startDate);
+    let dayPointer = 0;
 
-    for (let cycle = 0; cycle < cyclesCount; cycle++) {
-      for (const day of days) {
-        const dateStr = currentDate.toISOString().split('T')[0];
+    for (let i = 0; i < totalDays; i++) {
+      if (weekdays.includes(cursor.getDay())) {
+        const programDay = days[dayPointer % days.length];
+        const dateStr = cursor.toISOString().split('T')[0];
 
-        const { rows: workoutRows } = await client.query(
+        const { rows } = await client.query(
           `INSERT INTO workouts (user_id, program_day_id, title, date, status)
            VALUES ($1, $2, $3, $4, 'planned')
            RETURNING *`,
-          [userId, day.id, day.title, dateStr]
+          [userId, programDay.id, programDay.title, dateStr]
         );
-        createdWorkouts.push(workoutRows[0]);
-
-        currentDate.setDate(currentDate.getDate() + 1);
+        created.push(rows[0]);
+        dayPointer++;
       }
+      cursor.setDate(cursor.getDate() + 1);
     }
 
     await client.query('COMMIT');
-    return createdWorkouts;
+    return created;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -109,11 +113,11 @@ export const syncWorkoutWithProgram = async (workoutId, userId) => {
       [workoutId, userId]
     );
     const workout = workoutRows[0];
-    if (!workout) throw new apiError(404, 'Тренировка не найдена');
-    if (!workout.program_day_id) throw new apiError(400, 'Тренировка не привязана к программе');
+    if (!workout) throw new ApiError(404, 'Тренировка не найдена');
+    if (!workout.program_day_id) throw new ApiError(400, 'Тренировка не привязана к программе');
 
     if (workout.status !== 'planned') {
-      throw new apiError(400, 'Нельзя синхронизировать уже начатую или завершённую тренировку');
+      throw new ApiError(400, 'Нельзя синхронизировать уже начатую или завершённую тренировку');
     }
 
     await client.query(`DELETE FROM workout_sets WHERE workout_id = $1`, [workoutId]);
@@ -148,7 +152,7 @@ export const updateWorkoutStatus = async (workoutId, userId, status) => {
     `UPDATE workouts SET status = $1 WHERE id = $2 AND user_id = $3 RETURNING *`,
     [status, workoutId, userId]
   );
-  if (!rows.length) throw new apiError(404, 'Тренировка не найдена');
+  if (!rows.length) throw new ApiError(404, 'Тренировка не найдена');
   return rows[0];
 };
 
@@ -157,7 +161,7 @@ export const deleteWorkout = async (workoutId, userId) => {
     `DELETE FROM workouts WHERE id = $1 AND user_id = $2 RETURNING id`,
     [workoutId, userId]
   );
-  if (!rows.length) throw new apiError(404, 'Тренировка не найдена');
+  if (!rows.length) throw new ApiError(404, 'Тренировка не найдена');
 };
 
 export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, weight, reps, rpe, isCompleted, orderIndex }) => {
@@ -165,7 +169,7 @@ export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, w
     `SELECT id FROM workouts WHERE id = $1 AND user_id = $2`,
     [workoutId, userId]
   );
-  if (!workoutRows.length) throw new apiError(404, 'Тренировка не найдена');
+  if (!workoutRows.length) throw new ApiError(404, 'Тренировка не найдена');
 
   if (setId) {
     const { rows } = await query(
@@ -175,7 +179,7 @@ export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, w
        RETURNING *`,
       [weight, reps, rpe, isCompleted, setId, workoutId]
     );
-    if (!rows.length) throw new apiError(404, 'Сет не найден');
+    if (!rows.length) throw new ApiError(404, 'Сет не найден');
     return rows[0];
   }
 
@@ -193,7 +197,7 @@ export const deleteWorkoutSet = async (setId, workoutId, userId) => {
     `SELECT id FROM workouts WHERE id = $1 AND user_id = $2`,
     [workoutId, userId]
   );
-  if (!workoutRows.length) throw new apiError(404, 'Тренировка не найдена');
+  if (!workoutRows.length) throw new ApiError(404, 'Тренировка не найдена');
 
   await query(`DELETE FROM workout_sets WHERE id = $1 AND workout_id = $2`, [setId, workoutId]);
 };

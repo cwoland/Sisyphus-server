@@ -1,5 +1,5 @@
 import { query } from '../../config/db.js';
-import { apiError } from '../../utils/apiError.js';
+import { ApiError } from '../../utils/apiError.js';
 
 export const listNutritionEntries = async (userId, { from, to }) => {
   const conditions = ['user_id = $1'];
@@ -39,7 +39,7 @@ export const updateNutritionEntry = async (entryId, userId, data) => {
      RETURNING *`,
     [data.name, data.calories, data.protein, data.fat, data.carbs, data.mealType, entryId, userId]
   );
-  if (!rows.length) throw new apiError(404, 'Запись не найдена');
+  if (!rows.length) throw new ApiError(404, 'Запись не найдена');
   return rows[0];
 };
 
@@ -48,7 +48,7 @@ export const deleteNutritionEntry = async (entryId, userId) => {
     `DELETE FROM nutrition_entries WHERE id = $1 AND user_id = $2 RETURNING id`,
     [entryId, userId]
   );
-  if (!rows.length) throw new apiError(404, 'Запись не найдена');
+  if (!rows.length) throw new ApiError(404, 'Запись не найдена');
 };
 
 export const getDailySummary = async (userId, date) => {

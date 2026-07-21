@@ -1,4 +1,4 @@
-import { query } from '../../db.js';
+import { query } from '../../config/db.js';
 
 export const listExercises = async ({ muscleGroup, search }) => {
     const conditions = [];

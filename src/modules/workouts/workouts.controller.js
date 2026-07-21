@@ -14,14 +14,15 @@ import {
 
 const createWorkoutSchema = z.object({
   title: z.string().min(1).max(150),
-  date: z.string(), // ISO date string YYYY-MM-DD
+  date: z.string(),
   notes: z.string().optional(),
 });
 
 const scheduleSchema = z.object({
   programId: z.string().uuid(),
   startDate: z.string(),
-  cyclesCount: z.number().int().min(1).max(52),
+  weekDays: z.array(z.number().int().min(0).max(6)).min(1),
+  weeksCount: z.number().int().min(1).max(52),
 });
 
 const statusSchema = z.object({
@@ -31,9 +32,9 @@ const statusSchema = z.object({
 const setSchema = z.object({
   setId: z.string().uuid().optional(),
   exerciseId: z.string().uuid().optional(),
-  weight: z.number().optional(),
-  reps: z.number().int().optional(),
-  rpe: z.number().min(1).max(10).optional(),
+  weight: z.number().nullable().optional(),
+  reps: z.number().int().nullable().optional(),
+  rpe: z.number().min(1).max(10).nullable().optional(),
   isCompleted: z.boolean().optional(),
   orderIndex: z.number().int().optional(),
 });

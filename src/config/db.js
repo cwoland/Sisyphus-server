@@ -1,6 +1,8 @@
 import pg from 'pg';
 import { env } from './env.js';
 
+pg.types.setTypeParser(1082, (value) => value);
+
 const { Pool } = pg;
 
 export const pool = new Pool({

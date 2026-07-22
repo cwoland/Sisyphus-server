@@ -18,6 +18,12 @@ const createWorkoutSchema = z.object({
   notes: z.string().optional(),
 });
 
+const updateWorkoutSchema = z.object({
+  title: z.string().min(1).max(150).optional(),
+  date: z.string().optional(),
+  notes: z.string().nullable().optional(),
+});
+
 const scheduleSchema = z.object({
   programId: z.string().uuid(),
   startDate: z.string(),
@@ -54,6 +60,12 @@ export const postWorkout = asyncHandler(async (req, res) => {
   const data = createWorkoutSchema.parse(req.body);
   const workout = await createWorkout({ userId: req.userId, ...data });
   res.status(201).json({ workout });
+});
+
+export const patchWorkout = asyncHandler(async (req, res) => {
+  const data = updateWorkoutSchema.parse(req.body);
+  const workout = await updateWorkout(req.params.id, req.userId, data);
+  res.json({ workout });
 });
 
 export const postScheduleProgram = asyncHandler(async (req, res) => {

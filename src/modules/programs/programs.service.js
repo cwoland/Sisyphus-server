@@ -3,7 +3,7 @@ import { ApiError } from '../../utils/apiError.js';
 
 export const listUserPrograms = async (userId) => {
     const { rows } = await query(
-        `SELECT * FROM programs WHERE user_id = $1 ORDER BY created_at DESC`,
+        `SELECT * FROM programs WHERE owner_id = $1 ORDER BY created_at DESC`,
         [userId]
     );
     return rows;

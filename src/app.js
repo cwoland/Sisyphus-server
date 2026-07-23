@@ -16,6 +16,7 @@ import chatRoutes from './modules/chat/chat.routes.js';
 import pushRoutes from './modules/push/push.routes.js';
 import aiRoutes from './modules/ai/ai.routes.js';
 import recordsRoutes from './modules/records/records.routes.js';
+import usersRoutes from './modules/users/users.routes.js';
 
 const app = express();
 
@@ -35,6 +36,7 @@ app.use('/api/chats', chatRoutes);
 app.use('/api/push', pushRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/records', recordsRoutes);
+app.use('/api/users', usersRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 

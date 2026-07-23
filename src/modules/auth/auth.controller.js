@@ -27,7 +27,7 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
-const REFRESH_COOKIE_OPTIONS = {
+export const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: 'lax',

@@ -42,10 +42,13 @@ export const revokeRefreshToken = async (rawToken) => {
     await query(`DELETE FROM refresh_tokens WHERE token_hash = $1`, [tokenHash]);
 };
 
-export const isUsernameTaken = async (username) => {
+export const isUsernameTaken = async (username, excludeUserId = null) => {
     const { rows } = await query(
-        `SELECT 1 FROM users WHERE lower(username) = lower($1) LIMIT 1`,
-        [username]
+        `SELECT 1 FROM users
+          WHERE lower(username) = lower($1)
+            AND ($2::uuid IS NULL OR id <> $2)
+          LIMIT 1`,
+        [username, excludeUserId]
     );
     return rows.length > 0;
 };

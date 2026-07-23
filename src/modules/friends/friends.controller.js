@@ -9,17 +9,22 @@ import {
 } from './friends.service.js';
 
 const sendRequestSchema = z.object({
-  email: z.string().email(),
+  username: z.string().min(1),
+});
+
+export const getUserSearch = asyncHandler(async (req, res) => {
+  const users = await searchUsersByUsername(req.userId, req.query.q);
+  res.json({ users });
+});
+
+export const postFriendRequest = asyncHandler(async (req, res) => {
+  const { username } = sendRequestSchema.parse(req.body);
+  const friendship = await sendFriendRequest(req.userId, username);
+  res.status(201).json({ friendship });
 });
 
 const respondSchema = z.object({
   accept: z.boolean(),
-});
-
-export const postFriendRequest = asyncHandler(async (req, res) => {
-  const { email } = sendRequestSchema.parse(req.body);
-  const friendship = await sendFriendRequest(req.userId, email);
-  res.status(201).json({ friendship });
 });
 
 export const patchFriendRequest = asyncHandler(async (req, res) => {

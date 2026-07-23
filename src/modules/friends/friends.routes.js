@@ -6,12 +6,14 @@ import {
   getFriends,
   getPendingRequests,
   deleteFriend,
+  getUserSearch,
 } from './friends.controller.js';
 
 const router = Router();
 
 router.use(authGuard);
 router.get('/', getFriends);
+router.get('/search', getUserSearch);
 router.get('/requests', getPendingRequests);
 router.post('/requests', postFriendRequest);
 router.patch('/requests/:id', patchFriendRequest);

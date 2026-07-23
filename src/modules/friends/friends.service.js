@@ -1,9 +1,31 @@
 import { query } from '../../config/db.js';
 import { ApiError } from '../../utils/apiError.js';
 
+export const searchUsersByUsername = async (userId, rawQuery) => {
+    const term = (rawQuery || '').trim();
+    if (term.length < 2) return [];
+    const pattern = term.replace(/[\\%_]/g, '\\$&').toLowerCase() + '%';
+
+    const { rows } = await query(
+        `SELECT u.id, u.username, u.name, u.avatar_url
+           FROM users u
+          WHERE lower(u.username) LIKE $1 ESCAPE '\\'
+            AND u.id <> $2
+            AND NOT EXISTS (
+              SELECT 1 FROM friendships f
+              WHERE (f.requester_id = $2 AND f.addressee_id = u.id)
+                 OR (f.requester_id = u.id AND f.addressee_id = $2)
+            )
+          ORDER BY u.username ASC
+          LIMIT 10`,
+        [pattern, userId]
+    );
+    return rows;
+};
+
 export const sendFriendRequest = async (requesterId, addresseeEmail) => {
     const { rows: userRows } = await query(
-        `SELECT id FROM users WHERE email = $1`,
+        `SELECT id FROM users WHERE lower(username) = lower($1)`,
         [addresseeEmail.toLowerCase()]
     );
     const addressee = userRows[0];
@@ -57,7 +79,7 @@ export const listFriends = async (userId) => {
     const { rows } = await query(
         `SELECT
            f.id AS friendship_id,
-           u.id, u.name, u.email, u.avatar_url
+           u.id, u.name, u.username, u.email, u.avatar_url
            FROM friendships f
            JOIN users u ON u.id = CASE
             WHEN f.requester_id = $1 THEN f.addressee_id
@@ -72,7 +94,7 @@ export const listFriends = async (userId) => {
 
 export const listPendingRequests = async (userId) => {
     const { rows } = await query(
-        `SELECT f.id AS friendship_id, u.id, u.name, u.email, u.avatar_url, f.created_at
+        `SELECT f.id AS friendship_id, u.id, u.name, u.username, u.email, u.avatar_url, f.created_at
         FROM friendships f
         JOIN users u ON u.id = f.requester_id
         WHERE f.addressee_id = $1 AND f.status = 'pending'

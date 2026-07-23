@@ -42,13 +42,21 @@ export const revokeRefreshToken = async (rawToken) => {
     await query(`DELETE FROM refresh_tokens WHERE token_hash = $1`, [tokenHash]);
 };
 
-export const createUser = async ({ email, password, name }) => {
+export const isUsernameTaken = async (username) => {
+    const { rows } = await query(
+        `SELECT 1 FROM users WHERE lower(username) = lower($1) LIMIT 1`,
+        [username]
+    );
+    return rows.length > 0;
+};
+
+export const createUser = async ({ email, password, name, username }) => {
     const passwordHash = await hashPassword(password);
     const { rows } = await query(
-        `INSERT INTO users (email, password_hash, name)
-        VALUES ($1, $2, $3)
-        RETURNING id, email, name, avatar_url, created_at`,
-        [email.toLowerCase(), passwordHash, name]
+        `INSERT INTO users (email, password_hash, name, username)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id, email, name, username, avatar_url, created_at`,
+        [email.toLowerCase(), passwordHash, name, username.toLowerCase()]
     );
     return rows[0];
 };
@@ -60,7 +68,7 @@ export const findUserByEmail = async (email) => {
 
 export const findUserById = async (id) => {
     const { rows } = await query(
-        `SELECT id, email, name, avatar_url, settings, created_at FROM users WHERE id = $1`,
+        `SELECT id, email, name, username, avatar_url, settings, created_at FROM users WHERE id = $1`,
         [id]
     );
     return rows[0] || null;

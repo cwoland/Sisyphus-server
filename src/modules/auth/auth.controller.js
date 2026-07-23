@@ -8,6 +8,7 @@ import {
   verifyRefreshToken,
   revokeRefreshToken,
   findUserById,
+  isUsernameTaken
 } from './auth.service.js';
 import { env } from '../../config/env.js';
 
@@ -15,6 +16,10 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8, 'Минимум 8 символов'),
   name: z.string().min(2).max(100),
+  username: z.string()
+    .min(3, 'Минимум 3 символа')
+    .max(20, 'Максимум 20 символов')
+    .regex(/^[a-zA-Z0-9_]+$/, 'Только латиница, цифры и _'),
 });
 
 const loginSchema = z.object({
@@ -38,8 +43,20 @@ export const register = async (req, res, next) => {
     if (existing) {
       return res.status(409).json({ message: 'Пользователь с таким email уже существует' });
     }
+    if (await isUsernameTaken(data.username)) {
+      return res.status(409).json({ message: 'Этот юзернейм уже занят' });
+    }
 
-    const user = await createUser(data);
+    let user;
+    try {
+      user = await createUser(data);
+    } catch (err) {
+      if (err.code === '23505') {
+        return res.status(409).json({ message: 'Этот юзернейм уже занят' });
+      }
+      throw err;
+    }
+
     const accessToken = generateAccessToken(user.id);
     const refreshToken = await generateRefreshToken(user.id);
 
@@ -64,7 +81,7 @@ export const login = async (req, res, next) => {
 
     res.cookie('refreshToken', refreshToken, REFRESH_COOKIE_OPTIONS);
     res.json({
-      user: { id: user.id, email: user.email, name: user.name, avatar_url: user.avatar_url },
+      user: { id: user.id, email: user.email, name: user.name, username: user.username, avatar_url: user.avatar_url },
       accessToken,
     });
   } catch (err) {

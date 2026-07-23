@@ -27,7 +27,7 @@ const updateWorkoutSchema = z.object({
 const scheduleSchema = z.object({
   programId: z.string().uuid(),
   startDate: z.string(),
-  weekDays: z.array(z.number().int().min(0).max(6)).min(1),
+  weekdays: z.array(z.number().int().min(0).max(6)).min(1),
   weeksCount: z.number().int().min(1).max(52),
 });
 

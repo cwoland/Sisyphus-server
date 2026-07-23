@@ -7,6 +7,7 @@ import {
   deleteProgram,
   forkProgram,
   updateProgram,
+  listPublicPrograms,
 } from './programs.service.js';
 
 const exerciseSchema = z.object({
@@ -36,6 +37,11 @@ export const getMyPrograms = asyncHandler(async (req, res) => {
 export const getProgram = asyncHandler(async (req, res) => {
   const program = await getProgramWithDays(req.params.id, req.userId);
   res.json({ program });
+});
+
+export const getPublicPrograms = asyncHandler(async (req, res) => {
+  const programs = await listPublicPrograms(req.userId, req.query.q);
+  res.json({ programs });
 });
 
 export const postProgram = asyncHandler(async (req, res) => {

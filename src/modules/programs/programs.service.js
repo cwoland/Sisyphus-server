@@ -9,6 +9,30 @@ export const listUserPrograms = async (userId) => {
     return rows;
 };
 
+export const listPublicPrograms = async (userId, rawQuery) => {
+  const term = (rawQuery || '').trim();
+  const params = [userId];
+  let where = `p.is_public = true AND p.owner_id <> $1`;
+
+  if (term.length >= 2) {
+    params.push('%' + term.replace(/[\\%_]/g, '\\$&').toLowerCase() + '%');
+    where += ` AND lower(p.title) LIKE $${params.length} ESCAPE '\\'`;
+  }
+
+  const { rows } = await query(
+    `SELECT p.id, p.title, p.description, p.created_at,
+            u.username AS author_username,
+            (SELECT count(*) FROM program_days pd WHERE pd.program_id = p.id) AS days_count
+       FROM programs p
+       JOIN users u ON u.id = p.owner_id
+      WHERE ${where}
+      ORDER BY p.created_at DESC
+      LIMIT 30`,
+    params
+  );
+  return rows;
+};
+
 export const getProgramWithDays = async (programId, userId) => {
     const { rows: programRows } = await query(
         `SELECT * FROM programs WHERE id = $1`,

@@ -18,6 +18,7 @@ import aiRoutes from './modules/ai/ai.routes.js';
 import recordsRoutes from './modules/records/records.routes.js';
 import usersRoutes from './modules/users/users.routes.js';
 import bodyRoutes from './modules/body/body.routes.js';
+import feedRoutes from './modules/feed/feed.routes.js';
 
 const app = express();
 
@@ -39,6 +40,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/records', recordsRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/body', bodyRoutes);
+app.use('/api/feed', feedRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 

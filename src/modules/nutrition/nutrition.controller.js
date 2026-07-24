@@ -8,6 +8,7 @@ import {
   getDailySummary,
   getOrCreateTargets,
   updateTargets,
+  listRecentFoods,
 } from './nutrition.service.js';
 
 const entrySchema = z.object({
@@ -31,6 +32,11 @@ export const getEntries = asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const entries = await listNutritionEntries(req.userId, { from, to });
   res.json({ entries });
+});
+
+export const getRecentFoods = asyncHandler(async (req, res) => {
+  const foods = await listRecentFoods(req.userId, req.query.q);
+  res.json({ foods });
 });
 
 export const postEntry = asyncHandler(async (req, res) => {

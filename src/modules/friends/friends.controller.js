@@ -6,6 +6,7 @@ import {
   listFriends,
   listPendingRequests,
   removeFriend,
+  searchUsersByUsername,
 } from './friends.service.js';
 
 const sendRequestSchema = z.object({

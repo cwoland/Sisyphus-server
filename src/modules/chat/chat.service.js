@@ -1,5 +1,6 @@
 import { query } from '../../config/db.js';
 import { ApiError } from '../../utils/apiError.js';
+import { sendPushToUser } from '../push/push.service.js';
 
 const areFriends = async (userA, userB) => {
   const { rows } = await query(
@@ -93,7 +94,7 @@ export const listMessages = async (chatId, userId, { after, limit }) => {
 };
 
 export const sendMessage = async (chatId, senderId, text) => {
-  await assertChatAccess(chatId, senderId);
+  const chat = await assertChatAccess(chatId, senderId);
 
   const { rows } = await query(
     `INSERT INTO chat_messages (chat_id, sender_id, text)
@@ -101,7 +102,23 @@ export const sendMessage = async (chatId, senderId, text) => {
      RETURNING *`,
     [chatId, senderId, text]
   );
-  return rows[0];
+  const message = rows[0];
+
+  const recipientId = chat.user_a_id === senderId ? chat.user_b_id : chat.user_a_id;
+
+  const { rows: senderRows } = await query(
+    `SELECT name FROM users WHERE id = $1`,
+    [senderId]
+  );
+  const senderName = senderRows[0]?.name || 'Новое сообщение';
+
+  sendPushToUser(recipientId, {
+    title: senderName,
+    body: text.length > 80 ? text.slice(0, 79) + '…' : text,
+    url: `/chat?chat=${chatId}`,
+  }).catch((err) => console.error('Chat push failed:', err.message));
+
+  return message;
 };
 
 export const markMessagesRead = async (chatId, userId) => {

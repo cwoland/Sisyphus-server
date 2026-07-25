@@ -7,7 +7,7 @@ export const saveSubscription = async (userId, subscription) => {
   const { rows } = await query(
     `INSERT INTO push_subscriptions (user_id, endpoint, keys)
      VALUES ($1, $2, $3)
-     ON CONFLICT (endpoint) DO UPDATE SET keys = $3
+     ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, keys = $3
      RETURNING *`,
     [userId, endpoint, keys]
   );

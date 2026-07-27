@@ -7,6 +7,8 @@ import {
     postScheduleProgram,
     postSyncWorkout,
     patchWorkoutStatus,
+    postStartWorkout,
+    getActive,
     removeWorkout,
     putWorkoutSet,
     removeWorkoutSet,
@@ -18,6 +20,8 @@ router.use(authGuard);
 router.get('/', getWorkouts);
 router.get('/:id', getWorkout);
 router.post('/', postWorkout);
+router.get('/active', getActive);
+router.post('/:id/start', postStartWorkout);
 router.post('/schedule-program', postScheduleProgram);
 router.post('/:id/sync', postSyncWorkout);
 router.patch('/:id/status', patchWorkoutStatus);

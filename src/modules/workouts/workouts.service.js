@@ -52,6 +52,72 @@ export const createWorkout = async ({ userId, title, date, notes }) => {
   return rows[0];
 };
 
+export const startWorkout = async (workoutId, userId) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: wRows } = await client.query(
+      `SELECT * FROM workouts WHERE id = $1 AND user_id = $2`,
+      [workoutId, userId]
+    );
+    const workout = wRows[0];
+    if (!workout) throw new ApiError(404, 'Тренировка не найдена');
+    if (workout.status === 'completed') throw new ApiError(400, 'Тренировка уже завершена');
+
+    const { rows: existing } = await client.query(
+      `SELECT 1 FROM workout_sets WHERE workout_id = $1 LIMIT 1`,
+      [workoutId]
+    );
+
+    if (!existing.length && workout.program_day_id) {
+      const { rows: template } = await client.query(
+        `SELECT * FROM program_exercises WHERE program_day_id = $1 ORDER BY order_index ASC`,
+        [workout.program_day_id]
+      );
+      for (const ex of template) {
+        for (let i = 0; i < ex.target_sets; i++) {
+          const { rows: last } = await client.query(
+            `SELECT ws.weight, ws.reps FROM workout_sets ws
+            JOIN workouts w ON w.id = ws.workout_id
+            WHERE w.user_id = $1 AND ws.exercise_id = $2
+            AND ws.weight IS NOT NULL AND ws.reps IS NOT NULL
+            ORDER BY w.date DESC, ws.order_index DESC LIMIT 1`,
+            [userId, ex.exercise_id]
+          );
+          await client.query(
+            `INSERT INTO workout_sets (workout_id, exercise_id, order_index, weight, reps)
+            VALUES ($1, $2, $3, $4, $5)`,
+            [workoutId, ex.exercise_id, ex.order_index * 100 + i, last[0]?.weight ?? null, last[0]?.reps ?? null]
+          );
+        }
+      }
+    }
+
+    await client.query(
+      `UPDATE workouts SET status = 'in_progress' WHERE id = $1`,
+      [workoutId]
+    );
+
+    await client.query('COMMIT');
+    return getWorkoutWithSets(workoutId, userId);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+};
+
+export const getActiveWorkout = async (userId) => {
+  const { rows } = await client.query(
+    `SELECT * FROM workouts WHERE user_id = $1 AND status = 'in_progress'
+    ORDER BY date DESC LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
+};
+
 export const scheduleProgramToCalendar = async ({ userId, programId, startDate, weekdays, weeksCount }) => {
   const client = await pool.connect();
 

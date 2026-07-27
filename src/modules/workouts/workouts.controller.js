@@ -4,6 +4,8 @@ import {
   listWorkouts,
   getWorkoutWithSets,
   createWorkout,
+  startWorkout,
+  getActiveWorkout,
   scheduleProgramToCalendar,
   syncWorkoutWithProgram,
   updateWorkoutStatus,
@@ -65,6 +67,16 @@ export const postWorkout = asyncHandler(async (req, res) => {
 export const patchWorkout = asyncHandler(async (req, res) => {
   const data = updateWorkoutSchema.parse(req.body);
   const workout = await updateWorkout(req.params.id, req.userId, data);
+  res.json({ workout });
+});
+
+export const postStartWorkout = asyncHandler(async (req, res) => {
+  const workout = await startWorkout(req.params.id, req.userId);
+  res.json({ workout });
+});
+
+export const getActive = asyncHandler(async (req, res) => {
+  const workout = await getActiveWorkout(req.userId);
   res.json({ workout });
 });
 

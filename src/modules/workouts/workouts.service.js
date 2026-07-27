@@ -137,6 +137,15 @@ export const scheduleProgramToCalendar = async ({ userId, programId, startDate, 
     if (!days.length) throw new ApiError(400, 'В программе нет дней для планирования');
     if (!weekdays?.length) throw new ApiError(400, 'Не выбраны тренировочные дни');
 
+    await client.query(
+      `DELETE FROM workouts
+        WHERE user_id = $1
+          AND program_day_id IN (SELECT id FROM program_days WHERE program_id = $2)
+          AND status = 'planned'
+          AND date >= $3`,
+          [userId, programId, startDate]
+    );
+
     const created = [];
     const totalDays = weeksCount * 7;
     const cursor = new Date(startDate);

@@ -94,8 +94,9 @@ export const startWorkout = async (workoutId, userId) => {
       }
     }
 
+    // COALESCE: возврат в начатую тренировку не должен обнулять отсчёт.
     await client.query(
-      `UPDATE workouts SET status = 'in_progress' WHERE id = $1`,
+      `UPDATE workouts SET status = 'in_progress', started_at = COALESCE(started_at, now()) WHERE id = $1`,
       [workoutId]
     );
 

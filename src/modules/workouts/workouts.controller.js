@@ -8,6 +8,7 @@ import {
   getActiveWorkout,
   scheduleProgramToCalendar,
   syncWorkoutWithProgram,
+  updateWorkout,
   updateWorkoutStatus,
   deleteWorkout,
   upsertWorkoutSet,
@@ -34,7 +35,7 @@ const scheduleSchema = z.object({
 });
 
 const statusSchema = z.object({
-  status: z.enum(['planned', 'completed', 'skipped']),
+  status: z.enum(['planned', 'in_progress', 'completed', 'skipped']),
 });
 
 const setSchema = z.object({

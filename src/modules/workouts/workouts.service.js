@@ -110,7 +110,7 @@ export const startWorkout = async (workoutId, userId) => {
 };
 
 export const getActiveWorkout = async (userId) => {
-  const { rows } = await client.query(
+  const { rows } = await query(
     `SELECT * FROM workouts WHERE user_id = $1 AND status = 'in_progress'
     ORDER BY date DESC LIMIT 1`,
     [userId]

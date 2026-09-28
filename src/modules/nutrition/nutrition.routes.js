@@ -15,7 +15,7 @@ const router = Router();
 
 router.use(authGuard);
 router.get('/entries', getEntries);
-router.get('recent', getRecentFoods);
+router.get('/recent', getRecentFoods);
 router.post('/entries', postEntry);
 router.patch('/entries/:id', patchEntry);
 router.delete('/entries/:id', removeEntry);

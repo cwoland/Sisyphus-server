@@ -1,0 +1,24 @@
+name: reminders
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Разбудить API
+        run: |
+          curl -sS --max-time 180 --retry 4 --retry-all-errors --retry-delay 15 \
+            -o /dev/null "${{ secrets.API_URL }}/api/push/public-key"
+
+      - name: Отправить напоминания
+        run: |
+          code=$(curl -sS --max-time 180 --retry 2 --retry-all-errors \
+            -o response.json -w '%{http_code}' \
+            -X POST "${{ secrets.API_URL }}/api/push/trigger-reminders" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}")
+          cat response.json; echo
+          test "$code" = "200"

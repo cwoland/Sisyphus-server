@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-const required = ['DATABASE_URL', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'OPENROUTER_API_KEY'];
+const required = ['DATABASE_URL', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY', 'OPENROUTER_API_KEY', 'CRON_SECRET'];
 
 for (const key of required) {
     if (!process.env[key]) {

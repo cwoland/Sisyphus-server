@@ -7,6 +7,7 @@
     "migrate:up": "dotenv -e .env -- node-pg-migrate up",
     "migrate:down": "dotenv -e .env -- node-pg-migrate down",
     "migrate:create": "dotenv -e .env -- node-pg-migrate create",
+    "migrate:deploy": "PGSSLMODE=no-verify node-pg-migrate up",
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon src/server.js",
     "start": "node src/server.js"

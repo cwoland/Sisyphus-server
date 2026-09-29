@@ -35,7 +35,7 @@ export const getWorkoutWithSets = async (workoutId, userId) => {
      FROM workout_sets ws
      JOIN exercises e ON e.id = ws.exercise_id
      WHERE ws.workout_id = $1
-     ORDER BY ws.order_index ASC`,
+     ORDER BY ws.order_index ASC, ws.exercise_id, ws.id`,
     [workoutId]
   );
 
@@ -52,13 +52,49 @@ export const createWorkout = async ({ userId, title, date, notes }) => {
   return rows[0];
 };
 
+const materializeSetsFromProgramDay = async (client, workoutId, programDayId) => {
+  const { rows } = await client.query(
+    `INSERT INTO workout_sets (workout_id, exercise_id, order_index)
+    SELECT $1, pe.exercise_id, pe.order_index * 100 + gs.i
+    FROM program_exercises pe
+    CROSS JOIN LATERAL generate_series(0, pe.target_sets - 1) AS gs(i)
+      WHERE pe.program_day_id = $2
+      ORDER BY pe.order_index, gs.i
+      RETURNING id`,
+    [workoutId, programDayId]
+  );
+  return rows.length;
+};
+
+const prefillSetsFromHistory = async (client, workoutId, userId) => {
+  await client.query(
+    `UPDATE workout_sets ws
+        SET weight = lp.weight, reps = lp.reps
+       FROM (
+         SELECT DISTINCT ON (s.exercise_id) s.exercise_id, s.weight, s.reps
+           FROM workout_sets s
+           JOIN workouts w ON w.id = s.workout_id
+          WHERE w.user_id = $2
+            AND w.id <> $1
+            AND s.weight IS NOT NULL
+            AND s.reps IS NOT NULL
+          ORDER BY s.exercise_id, w.date DESC, s.order_index DESC
+       ) lp
+      WHERE ws.workout_id = $1
+        AND ws.exercise_id = lp.exercise_id
+        AND ws.weight IS NULL
+        AND ws.reps IS NULL`,
+    [workoutId, userId]
+  );
+};
+
 export const startWorkout = async (workoutId, userId) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     const { rows: wRows } = await client.query(
-      `SELECT * FROM workouts WHERE id = $1 AND user_id = $2`,
+      `SELECT * FROM workouts WHERE id = $1 AND user_id = $2 FOR UPDATE`,
       [workoutId, userId]
     );
     const workout = wRows[0];
@@ -71,30 +107,11 @@ export const startWorkout = async (workoutId, userId) => {
     );
 
     if (!existing.length && workout.program_day_id) {
-      const { rows: template } = await client.query(
-        `SELECT * FROM program_exercises WHERE program_day_id = $1 ORDER BY order_index ASC`,
-        [workout.program_day_id]
-      );
-      for (const ex of template) {
-        for (let i = 0; i < ex.target_sets; i++) {
-          const { rows: last } = await client.query(
-            `SELECT ws.weight, ws.reps FROM workout_sets ws
-            JOIN workouts w ON w.id = ws.workout_id
-            WHERE w.user_id = $1 AND ws.exercise_id = $2
-            AND ws.weight IS NOT NULL AND ws.reps IS NOT NULL
-            ORDER BY w.date DESC, ws.order_index DESC LIMIT 1`,
-            [userId, ex.exercise_id]
-          );
-          await client.query(
-            `INSERT INTO workout_sets (workout_id, exercise_id, order_index, weight, reps)
-            VALUES ($1, $2, $3, $4, $5)`,
-            [workoutId, ex.exercise_id, ex.order_index * 100 + i, last[0]?.weight ?? null, last[0]?.reps ?? null]
-          );
-        }
-      }
+      await materializeSetsFromProgramDay(client, workoutId, workout.program_day_id);
     }
 
-    // COALESCE: возврат в начатую тренировку не должен обнулять отсчёт.
+    await prefillSetsFromHistory(client, workoutId, userId);
+
     await client.query(
       `UPDATE workouts SET status = 'in_progress', started_at = COALESCE(started_at, now()) WHERE id = $1`,
       [workoutId]
@@ -164,6 +181,7 @@ export const scheduleProgramToCalendar = async ({ userId, programId, startDate, 
           [userId, programDay.id, programDay.title, dateStr]
         );
         created.push(rows[0]);
+        await materializeSetsFromProgramDay(client, rows[0].id, programDay.id);
         dayPointer++;
       }
       cursor.setDate(cursor.getDate() + 1);
@@ -199,23 +217,8 @@ export const syncWorkoutWithProgram = async (workoutId, userId) => {
 
     await client.query(`DELETE FROM workout_sets WHERE workout_id = $1`, [workoutId]);
 
-    const { rows: templateExercises } = await client.query(
-      `SELECT * FROM program_exercises WHERE program_day_id = $1 ORDER BY order_index ASC`,
-      [workout.program_day_id]
-    );
-
-    for (const ex of templateExercises) {
-      for (let setIndex = 0; setIndex < ex.target_sets; setIndex++) {
-        await client.query(
-          `INSERT INTO workout_sets (workout_id, exercise_id, order_index)
-           VALUES ($1, $2, $3)`,
-          [workoutId, ex.exercise_id, ex.order_index * 100 + setIndex]
-        );
-      }
-    }
-
-    await client.query('COMMIT');
-    return getWorkoutWithSets(workoutId, userId);
+    await client.query(`DELETE FROM workout_sets WHERE workout_id = $1`, [workoutId]);
+    await materializeSetsFromProgramDay(client, workoutId, workout.program_day_id);
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

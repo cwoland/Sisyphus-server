@@ -10,7 +10,7 @@
     "migrate:deploy": "PGSSLMODE=no-verify node-pg-migrate up",
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "npm run migrate:deploy && node src/server.js"
   },
   "keywords": [],
   "author": "",

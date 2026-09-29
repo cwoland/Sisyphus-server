@@ -3,7 +3,15 @@ import { ApiError } from '../../utils/apiError.js';
 
 export const listUserPrograms = async (userId) => {
     const { rows } = await query(
-        `SELECT * FROM programs WHERE owner_id = $1 ORDER BY created_at DESC`,
+        `SELECT p.*,
+                (SELECT count(*) FROM program_days pd
+                  WHERE pd.program_id = p.id) AS days_count,
+                (SELECT count(*) FROM program_exercises pe
+                   JOIN program_days pd ON pd.id = pe.program_day_id
+                  WHERE pd.program_id = p.id) AS exercises_count
+           FROM programs p
+          WHERE p.owner_id = $1
+          ORDER BY p.created_at DESC`,
         [userId]
     );
     return rows;
@@ -22,7 +30,11 @@ export const listPublicPrograms = async (userId, rawQuery) => {
   const { rows } = await query(
     `SELECT p.id, p.title, p.description, p.created_at,
             u.username AS author_username,
-            (SELECT count(*) FROM program_days pd WHERE pd.program_id = p.id) AS days_count
+            (SELECT count(*) FROM program_days pd
+              WHERE pd.program_id = p.id) AS days_count,
+            (SELECT count(*) FROM program_exercises pe
+               JOIN program_days pd ON pd.id = pe.program_day_id
+              WHERE pd.program_id = p.id) AS exercises_count
        FROM programs p
        JOIN users u ON u.id = p.owner_id
       WHERE ${where}

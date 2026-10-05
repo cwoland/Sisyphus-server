@@ -105,8 +105,8 @@ export const removeWorkout = asyncHandler(async (req, res) => {
 
 export const putWorkoutSet = asyncHandler(async (req, res) => {
   const data = setSchema.parse(req.body);
-  const set = await upsertWorkoutSet({ workoutId: req.params.id, userId: req.userId, ...data });
-  res.json({ set });
+  const { set, record } = await upsertWorkoutSet({ workoutId: req.params.id, userId: req.userId, ...data });
+  res.json({ set, record });
 });
 
 export const removeWorkoutSet = asyncHandler(async (req, res) => {

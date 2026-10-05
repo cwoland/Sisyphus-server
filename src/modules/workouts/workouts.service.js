@@ -323,35 +323,112 @@ export const deleteWorkout = async (workoutId, userId) => {
   if (!rows.length) throw new ApiError(404, 'Тренировка не найдена');
 };
 
+const claimPersonalRecord = async (client, { userId, set, date }) => {
+  if (!set.is_completed) return null;
+
+  const weight = Number(set.weight);
+  const reps = Number(set.reps);
+  const oneRm = estimateOneRepMax(weight, reps);
+  if (!(oneRm > 0)) return null;
+
+  const { rows: prevRows } = await client.query(
+    `SELECT one_rm FROM personal_records WHERE user_id = $1 AND exercise_id = $2`,
+    [userId, set.exercise_id]
+  );
+  const previous = prevRows[0] ? Number(prevRows[0].one_rm) : null;
+
+  const { rows } = await client.query(
+    `INSERT INTO personal_records
+       (user_id, exercise_id, one_rm, weight, reps, workout_id, achieved_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (user_id, exercise_id) DO UPDATE SET
+       one_rm      = EXCLUDED.one_rm,
+       weight      = EXCLUDED.weight,
+       reps        = EXCLUDED.reps,
+       workout_id  = EXCLUDED.workout_id,
+       achieved_at = EXCLUDED.achieved_at,
+       updated_at  = now()
+     WHERE EXCLUDED.one_rm > personal_records.one_rm
+     RETURNING one_rm`,
+    [userId, set.exercise_id, oneRm.toFixed(2), weight, reps, set.workout_id, date]
+  );
+
+  if (!rows.length) return null;
+
+  return {
+    exerciseId: set.exercise_id,
+    oneRm: Number(rows[0].one_rm),
+    previousOneRm: previous,
+    weight,
+    reps,
+  };
+};
+
 export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, weight, reps, rpe, isCompleted, orderIndex }) => {
-  const { rows: workoutRows } = await query(
-    `SELECT id FROM workouts WHERE id = $1 AND user_id = $2`,
-    [workoutId, userId]
-  );
-  if (!workoutRows.length) throw new ApiError(404, 'Тренировка не найдена');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
 
-  if (setId) {
-    const { rows } = await query(
-      `UPDATE workout_sets
-       SET weight = $1, reps = $2, rpe = $3, is_completed = $4
-       WHERE id = $5 AND workout_id = $6
-       RETURNING *`,
-      [weight, reps, rpe, isCompleted, setId, workoutId]
+    const { rows: workoutRows } = await client.query(
+      `SELECT id, date FROM workouts WHERE id = $1 AND user_id = $2`,
+      [workoutId, userId]
     );
-    if (!rows.length) throw new ApiError(404, 'Сет не найден');
-    return rows[0];
-  }
+    const workout = workoutRows[0];
+    if (!workout) throw new ApiError(404, 'Тренировка не найдена');
 
-  const { rows } = await query(
-    `INSERT INTO workout_sets (workout_id, exercise_id, order_index, weight, reps, rpe, is_completed)
-     VALUES (
-        $1, $2,
-        COALESCE($3, (SELECT COALESCE(MAX(order_index), -1) + 1 FROM workout_sets WHERE workout_id = $1)),
-        $4, $5, $6, $7)
-     RETURNING *`,
-    [workoutId, exerciseId, orderIndex ?? null, weight, reps, rpe, isCompleted ?? false]
-  );
-  return rows[0];
+    let set;
+
+    if (setId) {
+      const fields = [];
+      const params = [];
+
+      const put = (column, value) => {
+        if (value === undefined) return;
+        params.push(value);
+        fields.push(`${column} = $${params.length}`);
+      };
+
+      put('weight', weight);
+      put('reps', reps);
+      put('rpe', rpe);
+      put('is_completed', isCompleted);
+
+      if (!fields.length) throw new ApiError(400, 'Нет полей для обновления');
+
+      params.push(setId, workoutId);
+
+      const { rows } = await client.query(
+        `UPDATE workout_sets SET ${fields.join(', ')}
+          WHERE id = $${params.length - 1} AND workout_id = $${params.length}
+          RETURNING *`,
+        params
+      );
+
+      if (!rows.length) throw new ApiError(404, 'Сет не найден');
+      set = rows[0];
+    } else {
+      const { rows } = await client.query(
+        `INSERT INTO workout_sets (workout_id, exercise_id, order_index, weight, reps, rpe, is_completed)
+         VALUES (
+            $1, $2,
+            COALESCE($3, (SELECT COALESCE(MAX(order_index), -1) + 1 FROM workout_sets WHERE workout_id = $1)),
+            $4, $5, $6, $7)
+         RETURNING *`,
+        [workoutId, exerciseId, orderIndex ?? null, weight ?? null, reps ?? null, rpe ?? null, isCompleted ?? false]
+      );
+      set = rows[0];
+    }
+
+    const record = await claimPersonalRecord(client, { userId, set, date: workout.date });
+
+    await client.query('COMMIT');
+    return { set, record };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 };
 
 export const deleteWorkoutSet = async (setId, workoutId, userId) => {

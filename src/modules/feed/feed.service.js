@@ -1,11 +1,12 @@
 import { query } from '../../config/db.js';
 
-export const listFriendsFeed = async (userId, { limit = 30, before } = {}) => {
+export const listFriendsFeed = async (userId, { limit = 30, before, beforeId } = {}) => {
   const params = [userId, limit];
   let cursor = '';
-  if (before) {
-    params.push(before);
-    cursor = ` AND e.occurred_at < $${params.length}`;
+
+  if (before && beforeId) {
+    params.push(before, beforeId);
+    cursor = ` AND (e.occurred_at, e.id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`;
   }
 
   const sql = [
@@ -36,7 +37,7 @@ export const listFriendsFeed = async (userId, { limit = 30, before } = {}) => {
     "       u.username AS author_username, u.avatar_url AS author_avatar",
     "FROM events e JOIN users u ON u.id = e.user_id",
     "WHERE true" + cursor,
-    "ORDER BY e.occurred_at DESC",
+    "ORDER BY e.occurred_at DESC, e.id DESC",
     "LIMIT $2",
   ].join("\n");
 

@@ -31,11 +31,11 @@ export const getWorkoutWithSets = async (workoutId, userId) => {
   if (!workout) throw new ApiError(404, 'Тренировка не найдена');
 
   const { rows: sets } = await query(
-    `SELECT ws.*, e.name AS exercise_name, e.muscle_group
+    `SELECT ws.*, e.name AS exercise_name, e.muscle_group, e.tracking
      FROM workout_sets ws
      JOIN exercises e ON e.id = ws.exercise_id
      WHERE ws.workout_id = $1
-     ORDER BY ws.order_index ASC, ws.exercise_id, ws.id`,
+     ORDER BY ws.order_index ASC, ws.exercise_id, ws.created_at, ws.id`,
     [workoutId]
   );
 
@@ -54,13 +54,37 @@ export const createWorkout = async ({ userId, title, date, notes }) => {
 
 const materializeSetsFromProgramDay = async (client, workoutId, programDayId) => {
   const { rows } = await client.query(
-    `INSERT INTO workout_sets (workout_id, exercise_id, order_index)
-    SELECT $1, pe.exercise_id, pe.order_index * 100 + gs.i
-    FROM program_exercises pe
-    CROSS JOIN LATERAL generate_series(0, pe.target_sets - 1) AS gs(i)
-      WHERE pe.program_day_id = $2
-      ORDER BY pe.order_index, gs.i
-      RETURNING id`,
+    `WITH pe AS (
+       SELECT exercise_id, group_index, order_index, target_sets,
+              row_number() OVER (PARTITION BY group_index ORDER BY order_index) - 1 AS slot
+         FROM program_exercises
+        WHERE program_day_id = $2
+     ),
+     grouped AS (
+       SELECT group_index, min(order_index) AS group_order, max(target_sets) AS rounds
+         FROM pe
+        GROUP BY group_index
+     ),
+     ordered AS (
+       SELECT group_index, rounds,
+              dense_rank() OVER (ORDER BY group_order) - 1 AS group_ordinal
+         FROM grouped
+     ),
+     slots AS (
+       SELECT pe.exercise_id, pe.group_index, pe.slot,
+              o.group_ordinal, r.round AS round_index
+         FROM pe
+         JOIN ordered o ON o.group_index = pe.group_index
+         CROSS JOIN LATERAL generate_series(0, o.rounds - 1) AS r(round)
+        WHERE r.round < pe.target_sets
+     )
+     INSERT INTO workout_sets (workout_id, exercise_id, order_index, group_index, round_index)
+     SELECT $1, exercise_id,
+            group_ordinal * 10000 + round_index * 100 + slot,
+            group_index, round_index
+       FROM slots
+      ORDER BY group_ordinal, round_index, slot
+     RETURNING id`,
     [workoutId, programDayId]
   );
   return rows.length;
@@ -69,21 +93,22 @@ const materializeSetsFromProgramDay = async (client, workoutId, programDayId) =>
 const prefillSetsFromHistory = async (client, workoutId, userId) => {
   await client.query(
     `UPDATE workout_sets ws
-        SET weight = lp.weight, reps = lp.reps
+        SET weight = lp.weight, reps = lp.reps, duration_sec = lp.duration_sec
        FROM (
-         SELECT DISTINCT ON (s.exercise_id) s.exercise_id, s.weight, s.reps
+         SELECT DISTINCT ON (s.exercise_id)
+                s.exercise_id, s.weight, s.reps, s.duration_sec
            FROM workout_sets s
            JOIN workouts w ON w.id = s.workout_id
           WHERE w.user_id = $2
             AND w.id <> $1
-            AND s.weight IS NOT NULL
-            AND s.reps IS NOT NULL
+            AND (s.reps IS NOT NULL OR s.duration_sec IS NOT NULL)
           ORDER BY s.exercise_id, w.date DESC, s.order_index DESC
        ) lp
       WHERE ws.workout_id = $1
         AND ws.exercise_id = lp.exercise_id
         AND ws.weight IS NULL
-        AND ws.reps IS NULL`,
+        AND ws.reps IS NULL
+        AND ws.duration_sec IS NULL`,
     [workoutId, userId]
   );
 };
@@ -364,7 +389,7 @@ const claimPersonalRecord = async (client, { userId, set, date }) => {
   };
 };
 
-export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, weight, reps, rpe, isCompleted, orderIndex }) => {
+export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, weight, reps, rpe, durationSec, isCompleted, orderIndex, setKind, parentSetId }) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -391,6 +416,7 @@ export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, w
       put('weight', weight);
       put('reps', reps);
       put('rpe', rpe);
+      put('duration_sec', durationSec);
       put('is_completed', isCompleted);
 
       if (!fields.length) throw new ApiError(400, 'Нет полей для обновления');
@@ -407,14 +433,41 @@ export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, w
       if (!rows.length) throw new ApiError(404, 'Сет не найден');
       set = rows[0];
     } else {
+      let parent = null;
+
+      if (parentSetId) {
+        const { rows: parentRows } = await client.query(
+          `SELECT id, exercise_id, order_index, group_index, round_index
+             FROM workout_sets WHERE id = $1 AND workout_id = $2`,
+          [parentSetId, workoutId]
+        );
+        parent = parentRows[0];
+        if (!parent) throw new ApiError(404, 'Основной подход не найден');
+      }
+
       const { rows } = await client.query(
-        `INSERT INTO workout_sets (workout_id, exercise_id, order_index, weight, reps, rpe, is_completed)
+        `INSERT INTO workout_sets
+           (workout_id, exercise_id, order_index, weight, reps, rpe, duration_sec, is_completed,
+            set_kind, parent_set_id, group_index, round_index)
          VALUES (
             $1, $2,
             COALESCE($3, (SELECT COALESCE(MAX(order_index), -1) + 1 FROM workout_sets WHERE workout_id = $1)),
-            $4, $5, $6, $7)
+            $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING *`,
-        [workoutId, exerciseId, orderIndex ?? null, weight ?? null, reps ?? null, rpe ?? null, isCompleted ?? false]
+        [
+          workoutId,
+          parent ? parent.exercise_id : exerciseId,
+          parent ? parent.order_index : orderIndex ?? null,
+          weight ?? null,
+          reps ?? null,
+          rpe ?? null,
+          durationSec ?? null,
+          isCompleted ?? false,
+          parent ? 'drop' : setKind ?? 'normal',
+          parent ? parent.id : null,
+          parent ? parent.group_index : 0,
+          parent ? parent.round_index : 0,
+        ]
       );
       set = rows[0];
     }

@@ -6,6 +6,7 @@ const createExerciseSchema = z.object({
     name: z.string().min(2).max(150),
     muscleGroup: z.enum(['chest', 'back', 'legs', 'shoulders', 'arms', 'core', 'cardio']),
     equipment: z.enum(['barbell', 'dumbbell', 'machine', 'bodyweight', 'kettlebell', 'resistance_band', 'cable', 'medicine_ball', 'other']).optional(),
+    tracking: z.enum(['weight_reps', 'reps', 'duration']).optional(),
 });
 
 export const getExercises = asyncHandler(async (req, res) => {

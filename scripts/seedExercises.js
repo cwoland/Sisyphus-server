@@ -72,16 +72,23 @@ const EXERCISES = [
   ['Колесо для пресса', 'core', 'bodyweight'],
 ];
 
+const trackingFor = (name, muscleGroup, equipment) => {
+  if (muscleGroup === 'cardio') return 'duration';
+  if (/планк|вис на/i.test(name)) return 'duration';
+  if (equipment === 'bodyweight') return 'reps';
+  return 'weight_reps';
+};
+
 const run = async () => {
   let created = 0;
   let skipped = 0;
 
   for (const [name, muscleGroup, equipment] of EXERCISES) {
     const { rowCount } = await query(
-      `INSERT INTO exercises (name, muscle_group, equipment)
-       SELECT $1::text, $2::text, $3::text
+      `INSERT INTO exercises (name, muscle_group, equipment, tracking)
+       SELECT $1::text, $2::text, $3::text, $4::text
        WHERE NOT EXISTS (SELECT 1 FROM exercises WHERE lower(name) = lower($1::text))`,
-      [name, muscleGroup, equipment]
+      [name, muscleGroup, equipment, trackingFor(name, muscleGroup, equipment)]
     );
     rowCount ? created++ : skipped++;
   }

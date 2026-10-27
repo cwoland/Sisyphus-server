@@ -1,5 +1,7 @@
 import { query } from '../../config/db.js';
 import { ApiError } from '../../utils/apiError.js';
+import { getProgramWithDays } from '../programs/programs.service.js';
+import { getWorkoutWithSets } from '../workouts/workouts.service.js';
 
 const areFriends = async (userA, userB) => {
   const { rows } = await query(
@@ -76,4 +78,30 @@ export const deleteShare = async (shareId, userId) => {
     [shareId, userId]
   );
   if (!rows.length) throw new ApiError(404, 'Не найдено');
+};
+
+export const getShare = async (shareId, userId) => {
+  const { rows } = await query(
+    `SELECT s.*, u.name AS from_user_name, u.username AS from_user_username,
+            u.avatar_url AS from_user_avatar
+       FROM shares s
+       JOIN users u ON u.id = s.from_user_id
+      WHERE s.id = $1 AND s.to_user_id = $2`,
+    [shareId, userId]
+  );
+
+  const share = rows[0];
+  if (!share) throw new ApiError(404, 'Не найдено');
+
+  if (share.program_id) {
+    const program = await getProgramWithDays(share.program_id, share.from_user_id);
+    return { share, kind: 'program', program };
+  }
+
+  if (share.workout_id) {
+    const workout = await getWorkoutWithSets(share.workout_id, share.from_user_id);
+    return { share, kind: 'workout', workout };
+  }
+
+  throw new ApiError(404, 'Не найдено');
 };

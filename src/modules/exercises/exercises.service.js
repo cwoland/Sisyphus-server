@@ -23,12 +23,12 @@ export const listExercises = async ({ muscleGroup, search }) => {
     return rows;
 };
 
-export const createExercise = async ({ name, muscleGroup, equipment, userId }) => {
+export const createExercise = async ({ name, muscleGroup, equipment, tracking, userId }) => {
     const { rows } = await query(
-        `INSERT INTO exercises (name, muscle_group, equipment, created_by)
-        VALUES ($1, $2, $3, $4) 
+        `INSERT INTO exercises (name, muscle_group, equipment, tracking, created_by)
+        VALUES ($1, $2, $3, $4, $5)
         RETURNING *`,
-        [name, muscleGroup, equipment ?? null, userId]
+        [name, muscleGroup, equipment ?? null, tracking ?? 'weight_reps', userId]
     );
     return rows[0];
 };

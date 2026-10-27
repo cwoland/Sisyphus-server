@@ -1,11 +1,15 @@
 import { z } from 'zod';
 import { asyncHandler } from '../../utils/asyncHandler.js';
+import { ApiError } from '../../utils/apiError.js';
 import {
   shareProgram,
   shareWorkout,
   listReceivedShares,
   deleteShare,
+  getShare,
 } from './shares.service.js';
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const shareProgramSchema = z.object({
   toUserId: z.string().uuid(),
@@ -37,4 +41,10 @@ export const getReceivedShares = asyncHandler(async (req, res) => {
 export const removeShare = asyncHandler(async (req, res) => {
   await deleteShare(req.params.id, req.userId);
   res.status(204).send();
+});
+
+export const getShareDetail = asyncHandler(async (req, res) => {
+  if (!UUID.test(req.params.id)) throw new ApiError(400, 'Некорректный идентификатор');
+  const detail = await getShare(req.params.id, req.userId);
+  res.json(detail);
 });

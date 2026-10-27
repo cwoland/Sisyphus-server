@@ -22,15 +22,14 @@ export const getExerciseHistory = async (userId, exerciseId, { limit = 200 } = {
   if (!exercise) throw new ApiError(404, 'Упражнение не найдено');
 
   const { rows: sets } = await query(
-    `SELECT ws.id, ws.weight, ws.reps, ws.rpe, ws.order_index,
+    `SELECT ws.id, ws.weight, ws.reps, ws.rpe, ws.duration_sec, ws.set_kind, ws.order_index,
             w.id AS workout_id, w.date, w.title AS workout_title
        FROM workout_sets ws
        JOIN workouts w ON w.id = ws.workout_id
       WHERE w.user_id = $1
         AND ws.exercise_id = $2
         AND ws.is_completed = true
-        AND ws.weight IS NOT NULL
-        AND ws.reps IS NOT NULL
+        AND (ws.reps IS NOT NULL OR ws.duration_sec IS NOT NULL)
       ORDER BY w.date DESC, ws.order_index ASC
       LIMIT $3`,
     [userId, exerciseId, limit]

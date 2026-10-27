@@ -67,7 +67,7 @@ export const getProgramWithDays = async (programId, userId) => {
 
     if (dayIds.length) {
         const { rows: exercises } = await query(
-            `SELECT pe.*, e.name AS exercise_name, e.muscle_group, e.equipment
+            `SELECT pe.*, e.name AS exercise_name, e.muscle_group, e.equipment, e.tracking
             FROM program_exercises pe
             JOIN exercises e ON e.id = pe.exercise_id
             WHERE pe.program_day_id = ANY($1)
@@ -90,17 +90,17 @@ export const getProgramWithDays = async (programId, userId) => {
     };
 };
 
-export const createProgram = async ({ ownerId, title, description, isPublic, days }) => {
+export const createProgram = async ({ ownerId, title, description, isPublic, kind, days }) => {
   const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
 
     const { rows: programRows } = await client.query(
-      `INSERT INTO programs (owner_id, title, description, is_public)
-       VALUES ($1, $2, $3, $4)
+      `INSERT INTO programs (owner_id, title, description, is_public, kind)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [ownerId, title, description ?? null, isPublic ?? false]
+      [ownerId, title, description ?? null, isPublic ?? false, kind ?? 'strength']
     );
     const program = programRows[0];
 
@@ -116,9 +116,12 @@ export const createProgram = async ({ ownerId, title, description, isPublic, day
       for (const [exIndex, ex] of day.exercises.entries()) {
         await client.query(
           `INSERT INTO program_exercises
-             (program_day_id, exercise_id, order_index, target_sets, target_reps, notes)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [createdDay.id, ex.exerciseId, exIndex, ex.targetSets, ex.targetReps, ex.notes ?? null]
+             (program_day_id, exercise_id, order_index, target_sets, target_reps, notes, group_index)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [
+            createdDay.id, ex.exerciseId, exIndex, ex.targetSets, ex.targetReps,
+            ex.notes ?? null, ex.groupIndex ?? exIndex,
+          ]
         );
       }
     }
@@ -142,17 +145,29 @@ export const deleteProgram = async (programId, userId) => {
 };
 
 export const forkProgram = async (programId, userId) => {
-    const original = await getProgramWithDays(programId, userId);
+    const { rows: metaRows } = await query(
+        `SELECT id, owner_id, is_public FROM programs WHERE id = $1`,
+        [programId]
+    );
+    const meta = metaRows[0];
+    if (!meta) throw new ApiError(404, 'Программа не найдена');
 
-    if (!original.is_public && original.owner_id !== userId) {
-        throw new ApiError(403, 'Нет доступа к этой программе');
+    if (!meta.is_public && meta.owner_id !== userId) {
+        const { rows: shared } = await query(
+            `SELECT 1 FROM shares WHERE program_id = $1 AND to_user_id = $2 LIMIT 1`,
+            [programId, userId]
+        );
+        if (!shared.length) throw new ApiError(403, 'Нет доступа к этой программе');
     }
+
+    const original = await getProgramWithDays(programId, meta.owner_id);
 
     return createProgram({
         ownerId: userId,
         title: `${original.title} (копия)`,
         description: original.description,
         isPublic: false,
+        kind: original.kind,
         days: original.days.map((day) => ({
             title: day.title,
             exercises: day.exercises.map((ex) => ({
@@ -160,6 +175,7 @@ export const forkProgram = async (programId, userId) => {
                 targetSets: ex.target_sets,
                 targetReps: ex.target_reps,
                 notes: ex.notes,
+                groupIndex: ex.group_index,
             })),
         })),
     }).then(async (newProgram) => {
@@ -168,7 +184,7 @@ export const forkProgram = async (programId, userId) => {
     });
 };
 
-export const updateProgram = async (programId, userId, { title, description, isPublic, days }) => {
+export const updateProgram = async (programId, userId, { title, description, isPublic, kind, days }) => {
     const client = await pool.connect();
 
     try {
@@ -181,9 +197,10 @@ export const updateProgram = async (programId, userId, { title, description, isP
         if (!owned.length) throw new ApiError(404, 'Программа не найдена или нет прав доступа');
 
         await client.query(
-            `UPDATE programs SET title = $1, description = $2, is_public = $3, updated_at = now()
-            WHERE id = $4`,
-            [title, description ?? null, isPublic ?? false, programId]
+            `UPDATE programs SET title = $1, description = $2, is_public = $3,
+                                kind = COALESCE($4, kind), updated_at = now()
+            WHERE id = $5`,
+            [title, description ?? null, isPublic ?? false, kind ?? null, programId]
         );
 
         await client.query(`DELETE FROM program_days WHERE program_id = $1`, [programId]);
@@ -199,9 +216,12 @@ export const updateProgram = async (programId, userId, { title, description, isP
             for (const [exIndex, ex] of day.exercises.entries()) {
                 await client.query(
                     `INSERT INTO program_exercises
-                       (program_day_id, exercise_id, order_index, target_sets, target_reps, notes)
-                       VALUES ($1, $2, $3, $4, $5, $6)`,
-                       [createdDay.id, ex.exerciseId, exIndex, ex.targetSets, ex.targetReps, ex.notes ?? null]
+                       (program_day_id, exercise_id, order_index, target_sets, target_reps, notes, group_index)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                       [
+                         createdDay.id, ex.exerciseId, exIndex, ex.targetSets, ex.targetReps,
+                         ex.notes ?? null, ex.groupIndex ?? exIndex,
+                       ]
                 );
             }
         }

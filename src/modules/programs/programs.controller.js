@@ -15,6 +15,7 @@ const exerciseSchema = z.object({
   targetSets: z.number().int().min(1).max(20),
   targetReps: z.string().min(1).max(20),
   notes: z.string().optional(),
+  groupIndex: z.number().int().min(0).max(500).optional(),
 });
 
 const daySchema = z.object({
@@ -26,6 +27,7 @@ const createProgramSchema = z.object({
   title: z.string().min(2).max(150),
   description: z.string().optional(),
   isPublic: z.boolean().optional(),
+  kind: z.enum(['strength', 'crossfit']).optional(),
   days: z.array(daySchema).min(1),
 });
 

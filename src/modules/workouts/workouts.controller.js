@@ -44,8 +44,11 @@ const setSchema = z.object({
   weight: z.number().nullable().optional(),
   reps: z.number().int().nullable().optional(),
   rpe: z.number().min(1).max(10).nullable().optional(),
+  durationSec: z.number().int().min(0).max(86400).nullable().optional(),
   isCompleted: z.boolean().optional(),
   orderIndex: z.number().int().optional(),
+  setKind: z.enum(['normal', 'drop']).optional(),
+  parentSetId: z.string().uuid().optional(),
 });
 
 export const getWorkouts = asyncHandler(async (req, res) => {

@@ -1,4 +1,5 @@
 import { query } from '../../config/db.js';
+import { ApiError } from '../../utils/apiError.js';
 
 export const listFriendsFeed = async (userId, { limit = 30, before, beforeId } = {}) => {
   const params = [userId, limit];
@@ -34,7 +35,12 @@ export const listFriendsFeed = async (userId, { limit = 30, before, beforeId } =
     ")",
     "SELECT e.type, e.id, e.occurred_at, e.meta,",
     "       u.id AS author_id, u.name AS author_name,",
-    "       u.username AS author_username, u.avatar_url AS author_avatar",
+    "       u.username AS author_username, u.avatar_url AS author_avatar,",
+    "       (SELECT count(*) FROM feed_reactions fr",
+    "         WHERE fr.entity_type = e.type AND fr.entity_id = e.id)::int AS reactions,",
+    "       EXISTS (SELECT 1 FROM feed_reactions fr",
+    "                WHERE fr.entity_type = e.type AND fr.entity_id = e.id",
+    "                  AND fr.user_id = $1) AS reacted",
     "FROM events e JOIN users u ON u.id = e.user_id",
     "WHERE true" + cursor,
     "ORDER BY e.occurred_at DESC, e.id DESC",
@@ -43,4 +49,26 @@ export const listFriendsFeed = async (userId, { limit = 30, before, beforeId } =
 
   const { rows } = await query(sql, params);
   return rows;
+};
+
+const ENTITY_TYPES = ['workout', 'record', 'program'];
+
+export const addReaction = async (userId, entityType, entityId) => {
+  if (!ENTITY_TYPES.includes(entityType)) throw new ApiError(400, 'Неизвестный тип события');
+
+  await query(
+    `INSERT INTO feed_reactions (user_id, entity_type, entity_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (user_id, entity_type, entity_id) DO NOTHING`,
+    [userId, entityType, entityId]
+  );
+};
+
+export const removeReaction = async (userId, entityType, entityId) => {
+  if (!ENTITY_TYPES.includes(entityType)) throw new ApiError(400, 'Неизвестный тип события');
+
+  await query(
+    `DELETE FROM feed_reactions WHERE user_id = $1 AND entity_type = $2 AND entity_id = $3`,
+    [userId, entityType, entityId]
+  );
 };

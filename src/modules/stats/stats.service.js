@@ -164,3 +164,64 @@ export const getVolume = async (userId, { weeks = 12 } = {}) => {
     },
   };
 };
+
+const TODAY = `
+SELECT CASE WHEN $2::date BETWEEN CURRENT_DATE - 1 AND CURRENT_DATE + 1
+  THEN $2::date ELSE CURRENT_DATE END AS TODAY`;
+
+export const getVisitStreak = async (userId, localDate = null) => {
+  const { rows } = await query(
+    `WITH d AS (${TODAY}),
+     visits AS (SELECT visit_date FROM user_visits WHERE user_id = $1),
+     numbered AS (SELECT visit_date, row_number() OVER (ORDER BY visit_date) AS rn FROM visits),
+     islands AS (SELECT visit_date, (visit_date - (rn || ' days')::interval)::date AS grp FROM numbered),
+     runs AS (SELECT min(visit_date) AS started, max(visit_date) AS ended, count(*)::int AS len
+                FROM islands GROUP BY grp),
+     days AS (
+       SELECT g.day::date AS date,
+              EXISTS (SELECT 1 FROM visits v WHERE v.visit_date = g.day::date) AS visited
+         FROM d, generate_series(d.today - 6, d.today, INTERVAL '1 day') AS g(day)
+     )
+     SELECT d.today,
+            COALESCE((SELECT r.len FROM runs r WHERE r.ended >= d.today - 1
+                       ORDER BY r.ended DESC LIMIT 1), 0) AS current,
+            (SELECT r.started FROM runs r WHERE r.ended >= d.today - 1
+              ORDER BY r.ended DESC LIMIT 1) AS started_on,
+            COALESCE((SELECT max(r.len) FROM runs r), 0) AS longest,
+            EXISTS (SELECT 1 FROM visits v WHERE v.visit_date = d.today) AS today_counted,
+            (SELECT r.len FROM runs r WHERE r.ended < d.today - 1
+              ORDER BY r.ended DESC LIMIT 1) AS previous_len,
+            (SELECT max(r.ended) FROM runs r WHERE r.ended < d.today - 1) AS previous_ended,
+            (SELECT jsonb_agg(jsonb_build_object('date', date, 'visited', visited) ORDER BY date)
+               FROM days) AS days
+       FROM d`,
+    [userId, localDate]
+  );
+
+  const row = rows[0];
+  const current = row.current;
+
+  return {
+    today: row.today,
+    current,
+    longest: row.longest,
+    todayCounted: row.today_counted,
+    startedOn: row.started_on,
+    broken: current <= 1 && row.previous_len
+      ? { from: row.previous_len, endedOn: row.previous_ended }
+      : null,
+    days: row.days || [],
+  };
+};
+
+export const recordVisit = async (userId, localDate = null) => {
+  await query(
+    `WITH d AS (${TODAY})
+     INSERT INTO user_visits (user_id, visit_date)
+     SELECT $1, d.today FROM d
+     ON CONFLICT (user_id, visit_date) DO NOTHING`,
+    [userId, localDate]
+  );
+
+  return getVisitStreak(userId, localDate);
+};

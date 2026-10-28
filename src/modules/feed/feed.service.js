@@ -1,5 +1,6 @@
 import { query } from '../../config/db.js';
 import { ApiError } from '../../utils/apiError.js';
+import { sendPushToUser } from '../push/push.service.js';
 
 export const listFriendsFeed = async (userId, { limit = 30, before, beforeId } = {}) => {
   const params = [userId, limit];
@@ -38,6 +39,16 @@ export const listFriendsFeed = async (userId, { limit = 30, before, beforeId } =
     "       u.username AS author_username, u.avatar_url AS author_avatar,",
     "       (SELECT count(*) FROM feed_reactions fr",
     "         WHERE fr.entity_type = e.type AND fr.entity_id = e.id)::int AS reactions,",
+    "       COALESCE((",
+    "         SELECT jsonb_object_agg(g.kind, g.n) FROM (",
+    "           SELECT fr.kind, count(*)::int AS n FROM feed_reactions fr",
+    "             WHERE fr.entity_type = e.type AND fr.entity_id = e.id",
+    "             GROUP BY fr.kind",
+    "           ) g",
+    "       ), '{}'::jsonb) AS reaction_counts,",
+    "       (SELECT fr.kind FROM feed_reactions fr",
+    "         WHERE fr.entity_type = e.type AND fr.entity_id = e.id",
+    "           AND fr.user_id = $1) AS my_reaction,",
     "       EXISTS (SELECT 1 FROM feed_reactions fr",
     "                WHERE fr.entity_type = e.type AND fr.entity_id = e.id",
     "                  AND fr.user_id = $1) AS reacted",
@@ -53,15 +64,54 @@ export const listFriendsFeed = async (userId, { limit = 30, before, beforeId } =
 
 const ENTITY_TYPES = ['workout', 'record', 'program'];
 
-export const addReaction = async (userId, entityType, entityId) => {
-  if (!ENTITY_TYPES.includes(entityType)) throw new ApiError(400, 'Неизвестный тип события');
+export const REACTION_KINDS = ['heart', 'bicep', 'clap'];
 
-  await query(
-    `INSERT INTO feed_reactions (user_id, entity_type, entity_id)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (user_id, entity_type, entity_id) DO NOTHING`,
-    [userId, entityType, entityId]
+const REACTION_MARK = { heart: '❤️', bicep: '💪', clap: '👏' };
+
+const AUTHOR_SQL = {
+  workout: `SELECT w.user_id AS author_id, w.title AS label FROM workouts w WHERE w.id = $1`,
+  record: `SELECT pr.user_id AS author_id, e.name AS label
+             FROM personal_records pr
+             JOIN exercises e ON e.id = pr.exercise_id
+            WHERE pr.id = $1`,
+  program: `SELECT p.owner_id AS author_id, p.title AS label FROM programs p WHERE p.id = $1`,
+};
+
+const notifyAuthor = async (reactorId, entityType, entityId, kind) => {
+  const { rows } = await query(AUTHOR_SQL[entityType], [entityId]);
+  const target = rows[0];
+  if (!target || target.author_id === reactorId) return;
+
+  const { rows: who } = await query(`SELECT name FROM users WHERE id = $1`, [reactorId]);
+  const name = who[0]?.name || 'Кто-то';
+
+  await sendPushToUser(target.author_id, {
+    title: 'Ваше достижение оценили',
+    body: `${name}: ${REACTION_MARK[kind]} ${target.label}`,
+    url: '/friends',
+  });
+};
+
+export const addReaction = async (userId, entityType, entityId, rawKind) => {
+  if (!ENTITY_TYPES.includes(entityType)) throw new ApiError(400, 'Неизвестный тип события');
+  const kind = REACTION_KINDS.includes(rawKind) ? rawKind : 'heart';
+
+  const { rows } = await query(
+    `INSERT INTO feed_reactions (user_id, entity_type, entity_id, kind)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, entity_type, entity_id)
+     DO UPDATE SET kind = EXCLUDED.kind, created_at = now()
+     WHERE feed_reactions.kind IS DISTINCT FROM EXCLUDED.kind
+     RETURNING (xmax = 0) AS inserted`,
+    [userId, entityType, entityId, kind]
   );
+
+  if (rows[0]?.inserted) {
+    notifyAuthor(userId, entityType, entityId, kind)
+      .catch((err) => console.error('Reaction push failed:', err.message));
+  }
+
+  return { kind };
 };
 
 export const removeReaction = async (userId, entityType, entityId) => {

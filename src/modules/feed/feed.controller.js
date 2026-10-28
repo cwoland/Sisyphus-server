@@ -25,8 +25,8 @@ const reactionTarget = (req) => {
 
 export const postReaction = asyncHandler(async (req, res) => {
     const { type, id } = reactionTarget(req);
-    await addReaction(req.userId, type, id);
-    res.status(204).send();
+    const reaction = await addReaction(req.userId, type, id, req.body?.kind);
+    res.json(reaction);
 });
 
 export const deleteReaction = asyncHandler(async (req, res) => {

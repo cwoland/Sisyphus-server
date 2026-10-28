@@ -19,6 +19,8 @@ const entrySchema = z.object({
   protein: z.number().min(0).optional(),
   fat: z.number().min(0).optional(),
   carbs: z.number().min(0).optional(),
+  barcode: z.string().regex(/^[0-9]{6,14}$/).nullable().optional(),
+  grams: z.number().min(0).max(10000).nullable().optional(),
 });
 
 const targetsSchema = z.object({

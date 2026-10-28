@@ -20,6 +20,7 @@ import usersRoutes from './modules/users/users.routes.js';
 import bodyRoutes from './modules/body/body.routes.js';
 import feedRoutes from './modules/feed/feed.routes.js';
 import statsRoutes from './modules/stats/stats.routes.js';
+import foodRoutes from './modules/food/food.routes.js';
 
 const app = express();
 
@@ -45,6 +46,7 @@ app.use('/api/users', usersRoutes);
 app.use('/api/body', bodyRoutes);
 app.use('/api/feed', feedRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/food', foodRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 

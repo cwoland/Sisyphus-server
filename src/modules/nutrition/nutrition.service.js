@@ -21,12 +21,13 @@ export const listNutritionEntries = async (userId, { from, to }) => {
   return rows;
 };
 
-export const createNutritionEntry = async ({ userId, date, mealType, name, calories, protein, fat, carbs }) => {
+export const createNutritionEntry = async ({ userId, date, mealType, name, calories, protein, fat, carbs, barcode, grams }) => {
   const { rows } = await query(
-    `INSERT INTO nutrition_entries (user_id, date, meal_type, name, calories, protein, fat, carbs)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO nutrition_entries
+       (user_id, date, meal_type, name, calories, protein, fat, carbs, barcode, grams)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING *`,
-    [userId, date, mealType, name, calories, protein ?? 0, fat ?? 0, carbs ?? 0]
+    [userId, date, mealType, name, calories, protein ?? 0, fat ?? 0, carbs ?? 0, barcode ?? null, grams ?? null]
   );
   return rows[0];
 };
@@ -34,10 +35,14 @@ export const createNutritionEntry = async ({ userId, date, mealType, name, calor
 export const updateNutritionEntry = async (entryId, userId, data) => {
   const { rows } = await query(
     `UPDATE nutrition_entries
-     SET name = $1, calories = $2, protein = $3, fat = $4, carbs = $5, meal_type = $6
-     WHERE id = $7 AND user_id = $8
+     SET name = $1, calories = $2, protein = $3, fat = $4, carbs = $5, meal_type = $6,
+         barcode = $7, grams = $8
+     WHERE id = $9 AND user_id = $10
      RETURNING *`,
-    [data.name, data.calories, data.protein, data.fat, data.carbs, data.mealType, entryId, userId]
+    [
+      data.name, data.calories, data.protein, data.fat, data.carbs, data.mealType,
+      data.barcode ?? null, data.grams ?? null, entryId, userId,
+    ]
   );
   if (!rows.length) throw new ApiError(404, 'Запись не найдена');
   return rows[0];

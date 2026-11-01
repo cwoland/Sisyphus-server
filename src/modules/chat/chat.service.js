@@ -27,7 +27,8 @@ export const getOrCreateChat = async (userId, friendId) => {
   if (existing.length) return existing[0];
 
   const { rows } = await query(
-    `INSERT INTO chats (user_a_id, user_b_id) VALUES ($1, $2) RETURNING *`,
+    `INSERT INTO chats (user_a_id, user_b_id) VALUES ($1, $2)
+     ON CONFLICT (user_a_id, user_b_id) DO UPDATE SET user_a_id = EXCLUDED.user_a_id RETURNING *`,
     [userA, userB]
   );
   return rows[0];

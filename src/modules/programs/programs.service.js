@@ -191,7 +191,7 @@ export const updateProgram = async (programId, userId, { title, description, isP
         await client.query('BEGIN');
 
         const { rows: owned } = await client.query(
-            `SELECT id FROM programs WHERE id = $1 AND owner_id = $2`,
+            `SELECT id FROM programs WHERE id = $1 AND owner_id = $2 FOR UPDATE`,
             [programId, userId]
         );
         if (!owned.length) throw new ApiError(404, 'Программа не найдена или нет прав доступа');
@@ -203,15 +203,24 @@ export const updateProgram = async (programId, userId, { title, description, isP
             [title, description ?? null, isPublic ?? false, kind ?? null, programId]
         );
 
-        await client.query(`DELETE FROM program_days WHERE program_id = $1`, [programId]);
-
+        const { rows: existingDays } = await client.query(
+            'SELECT id, day_index FROM program_days WHERE program_id = $1 ORDER BY day_index', [programId]);
+        const keptIds = [];
+        // Avoid temporary index collisions when the user reorders days.
+        await client.query('UPDATE program_days SET day_index = day_index + 100000 WHERE program_id = $1', [programId]);
         for (const [dayIndex, day] of days.entries()) {
-            const { rows: dayRows } = await client.query(
-                `INSERT INTO program_days (program_id, day_index, title)
-                VALUES ($1, $2, $3) RETURNING *`,
-                [programId, dayIndex, day.title]
-            );
+            const existingId = day.id;
+            if (existingId && (!existingDays.some((d) => d.id === existingId) || keptIds.includes(existingId))) {
+                throw new ApiError(400, 'Некорректный день программы');
+            }
+            const { rows: dayRows } = existingId
+                ? await client.query('UPDATE program_days SET title = $1, day_index = $2 WHERE id = $3 RETURNING *',
+                    [day.title, dayIndex, existingId])
+                : await client.query('INSERT INTO program_days (program_id, day_index, title) VALUES ($1, $2, $3) RETURNING *',
+                    [programId, dayIndex, day.title]);
             const createdDay = dayRows[0];
+            keptIds.push(createdDay.id);
+            await client.query('DELETE FROM program_exercises WHERE program_day_id = $1', [createdDay.id]);
 
             for (const [exIndex, ex] of day.exercises.entries()) {
                 await client.query(
@@ -226,6 +235,7 @@ export const updateProgram = async (programId, userId, { title, description, isP
             }
         }
 
+        await client.query('DELETE FROM program_days WHERE program_id = $1 AND NOT (id = ANY($2::uuid[]))', [programId, keptIds]);
         await client.query('COMMIT');
         return getProgramWithDays(programId, userId);
     } catch (err) {

@@ -3,7 +3,7 @@ import { ApiError } from '../utils/apiError.js';
 
 export const errorMiddleware = (err, req, res, next) => {
   if (err instanceof ZodError) {
-    return res.status(400).json({ message: 'Ошибка валидации', errors: err.errors });
+    return res.status(400).json({ message: 'Ошибка валидации', errors: err.issues });
   }
   if (err instanceof ApiError) {
     return res.status(err.status).json({ message: err.message });

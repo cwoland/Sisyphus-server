@@ -31,7 +31,7 @@ export const generateRefreshToken = async (userId) => {
 export const verifyRefreshToken = async (rawToken) => {
     const tokenHash = hashToken(rawToken);
     const { rows } = await query(
-        `SELECT * FROM refresh_tokens WHERE token_hash = $1 AND expires_at > now()`,
+        `DELETE FROM refresh_tokens WHERE token_hash = $1 AND expires_at > now() RETURNING *`,
         [tokenHash]
     );
     return rows[0] || null;

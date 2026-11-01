@@ -21,14 +21,17 @@ export const listNutritionEntries = async (userId, { from, to }) => {
   return rows;
 };
 
-export const createNutritionEntry = async ({ userId, date, mealType, name, calories, protein, fat, carbs, barcode, grams }) => {
+export const createNutritionEntry = async ({ userId, date, mealType, name, calories, protein, fat, carbs, barcode, grams, clientId }) => {
   const { rows } = await query(
     `INSERT INTO nutrition_entries
-       (user_id, date, meal_type, name, calories, protein, fat, carbs, barcode, grams)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       (user_id, date, meal_type, name, calories, protein, fat, carbs, barcode, grams, id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11::uuid, gen_random_uuid()))
+     ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+       WHERE nutrition_entries.user_id = EXCLUDED.user_id
      RETURNING *`,
-    [userId, date, mealType, name, calories, protein ?? 0, fat ?? 0, carbs ?? 0, barcode ?? null, grams ?? null]
+    [userId, date, mealType, name, calories, protein ?? 0, fat ?? 0, carbs ?? 0, barcode ?? null, grams ?? null, clientId ?? null]
   );
+  if (!rows.length) throw new ApiError(409, 'Идентификатор записи уже используется');
   return rows[0];
 };
 
@@ -84,7 +87,8 @@ export const getOrCreateTargets = async (userId) => {
   if (rows.length) return rows[0];
 
   const { rows: created } = await query(
-    `INSERT INTO nutrition_targets (user_id) VALUES ($1) RETURNING *`,
+    `INSERT INTO nutrition_targets (user_id) VALUES ($1)
+     ON CONFLICT (user_id) DO UPDATE SET user_id = EXCLUDED.user_id RETURNING *`,
     [userId]
   );
   return created[0];

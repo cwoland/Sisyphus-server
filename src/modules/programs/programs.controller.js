@@ -19,6 +19,7 @@ const exerciseSchema = z.object({
 });
 
 const daySchema = z.object({
+  id: z.string().uuid().optional(),
   title: z.string().min(1).max(150),
   exercises: z.array(exerciseSchema).min(1),
 });

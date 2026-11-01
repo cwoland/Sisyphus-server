@@ -22,15 +22,15 @@ export const listWorkouts = async (userId, { from, to }) => {
   return rows;
 };
 
-export const getWorkoutWithSets = async (workoutId, userId) => {
-  const { rows: workoutRows } = await query(
+export const getWorkoutWithSets = async (workoutId, userId, execute = query) => {
+  const { rows: workoutRows } = await execute(
     `SELECT * FROM workouts WHERE id = $1 AND user_id = $2`,
     [workoutId, userId]
   );
   const workout = workoutRows[0];
   if (!workout) throw new ApiError(404, 'Тренировка не найдена');
 
-  const { rows: sets } = await query(
+  const { rows: sets } = await execute(
     `SELECT ws.*, e.name AS exercise_name, e.muscle_group, e.tracking
      FROM workout_sets ws
      JOIN exercises e ON e.id = ws.exercise_id
@@ -42,13 +42,16 @@ export const getWorkoutWithSets = async (workoutId, userId) => {
   return { ...workout, sets };
 };
 
-export const createWorkout = async ({ userId, title, date, notes }) => {
+export const createWorkout = async ({ userId, title, date, notes, clientId }) => {
   const { rows } = await query(
-    `INSERT INTO workouts (user_id, title, date, notes)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO workouts (user_id, title, date, notes, id)
+     VALUES ($1, $2, $3, $4, COALESCE($5::uuid, gen_random_uuid()))
+     ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+       WHERE workouts.user_id = EXCLUDED.user_id
      RETURNING *`,
-    [userId, title, date, notes ?? null]
+    [userId, title, date, notes ?? null, clientId ?? null]
   );
+  if (!rows.length) throw new ApiError(409, 'Идентификатор тренировки уже используется');
   return rows[0];
 };
 
@@ -101,6 +104,7 @@ const prefillSetsFromHistory = async (client, workoutId, userId) => {
            JOIN workouts w ON w.id = s.workout_id
           WHERE w.user_id = $2
             AND w.id <> $1
+            AND w.status = 'completed' AND s.is_completed = true
             AND (s.reps IS NOT NULL OR s.duration_sec IS NOT NULL)
           ORDER BY s.exercise_id, w.date DESC, s.order_index DESC
        ) lp
@@ -117,6 +121,7 @@ export const startWorkout = async (workoutId, userId) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
 
     const { rows: wRows } = await client.query(
       `SELECT * FROM workouts WHERE id = $1 AND user_id = $2 FOR UPDATE`,
@@ -125,6 +130,11 @@ export const startWorkout = async (workoutId, userId) => {
     const workout = wRows[0];
     if (!workout) throw new ApiError(404, 'Тренировка не найдена');
     if (workout.status === 'completed') throw new ApiError(400, 'Тренировка уже завершена');
+    const { rows: active } = await client.query(
+      `SELECT id FROM workouts WHERE user_id = $1 AND status = 'in_progress' AND id <> $2`,
+      [userId, workoutId]
+    );
+    if (active.length) throw new ApiError(409, 'Сначала завершите текущую тренировку');
 
     const { rows: existing } = await client.query(
       `SELECT 1 FROM workout_sets WHERE workout_id = $1 LIMIT 1`,
@@ -142,8 +152,9 @@ export const startWorkout = async (workoutId, userId) => {
       [workoutId]
     );
 
+    const result = await getWorkoutWithSets(workoutId, userId, client.query.bind(client));
     await client.query('COMMIT');
-    return getWorkoutWithSets(workoutId, userId);
+    return result;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -166,6 +177,7 @@ export const scheduleProgramToCalendar = async ({ userId, programId, startDate, 
 
   try {
     await client.query('BEGIN');
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
 
     const { rows: programRows } = await client.query(
       `SELECT * FROM programs WHERE id = $1 AND owner_id = $2`,
@@ -195,7 +207,7 @@ export const scheduleProgramToCalendar = async ({ userId, programId, startDate, 
     let dayPointer = 0;
 
     for (let i = 0; i < totalDays; i++) {
-      if (weekdays.includes(cursor.getDay())) {
+      if (weekdays.includes(cursor.getUTCDay())) {
         const programDay = days[dayPointer % days.length];
         const dateStr = cursor.toISOString().split('T')[0];
 
@@ -209,7 +221,7 @@ export const scheduleProgramToCalendar = async ({ userId, programId, startDate, 
         await materializeSetsFromProgramDay(client, rows[0].id, programDay.id);
         dayPointer++;
       }
-      cursor.setDate(cursor.getDate() + 1);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
 
     await client.query('COMMIT');
@@ -227,6 +239,7 @@ export const syncWorkoutWithProgram = async (workoutId, userId) => {
 
   try {
     await client.query('BEGIN');
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
 
     const { rows: workoutRows } = await client.query(
       `SELECT * FROM workouts WHERE id = $1 AND user_id = $2`,
@@ -241,9 +254,10 @@ export const syncWorkoutWithProgram = async (workoutId, userId) => {
     }
 
     await client.query(`DELETE FROM workout_sets WHERE workout_id = $1`, [workoutId]);
-
-    await client.query(`DELETE FROM workout_sets WHERE workout_id = $1`, [workoutId]);
     await materializeSetsFromProgramDay(client, workoutId, workout.program_day_id);
+    const result = await getWorkoutWithSets(workoutId, userId, client.query.bind(client));
+    await client.query('COMMIT');
+    return result;
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -252,43 +266,36 @@ export const syncWorkoutWithProgram = async (workoutId, userId) => {
   }
 };
 
-const recomputeRecordsForWorkout = async (client, { workoutId, userId, date }) => {
-  const { rows: sets } = await client.query(
-    `SELECT exercise_id, weight, reps
-      FROM workout_sets
-      WHERE workout_id = $1
-        AND is_completed = true
-        AND weight IS NOT NULL
-        AND reps IS NOT NULL
-        AND reps >= 1`,
-    [workoutId]
-  );
-
+// Recompute from valid source sets, including decreases and removed achievements.
+const recomputeRecords = async (client, userId) => {
+  const { rows } = await client.query(
+    `SELECT s.*, w.date FROM workout_sets s JOIN workouts w ON w.id = s.workout_id
+      WHERE w.user_id = $1 AND w.status IN ('completed', 'in_progress')
+        AND s.is_completed = true AND s.weight > 0 AND s.reps > 0
+      ORDER BY w.date ASC, s.created_at ASC, s.id ASC`, [userId]);
   const best = new Map();
-  for (const s of sets) {
-    const orm = estimateOneRepMax(Number(s.weight), Number(s.reps));
-    const prev = best.get(s.exercise_id);
-    if (!prev || orm > prev.orm) {
-      best.set(s.exercise_id, { orm, weight: Number(s.weight), reps: Number(s.reps) });
+  for (const set of rows) {
+    const oneRm = Number(estimateOneRepMax(Number(set.weight), Number(set.reps)).toFixed(2));
+    if (!best.has(set.exercise_id) || oneRm > best.get(set.exercise_id).oneRm) {
+      best.set(set.exercise_id, { ...set, oneRm });
     }
   }
-
-  for (const [exerciseId, r] of best) {
+  await client.query(`DELETE FROM personal_records WHERE user_id = $1
+    AND NOT (exercise_id = ANY($2::uuid[]))`, [userId, [...best.keys()]]);
+  for (const [exerciseId, set] of best) {
     await client.query(
-      `INSERT INTO personal_records
-        (user_id, exercise_id, one_rm, weight, reps, workout_id, achieved_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (user_id, exercise_id) DO UPDATE SET
-        one_rm        = EXCLUDED.one_rm,
-        weight        = EXCLUDED.weight,
-        reps          = EXCLUDED.reps,
-        workout_id    = EXCLUDED.workout_id,
-        achieved_at   = EXCLUDED.achieved_at,
-        updated_at    = now()
-      WHERE EXCLUDED.one_rm > personal_records.one_rm`,
-      [userId, exerciseId, r.orm.toFixed(2), r.weight, r.reps, workoutId, date]
-    );
+      `INSERT INTO personal_records (user_id, exercise_id, one_rm, weight, reps, workout_id, achieved_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id, exercise_id) DO UPDATE SET
+         one_rm = EXCLUDED.one_rm, weight = EXCLUDED.weight, reps = EXCLUDED.reps,
+         workout_id = EXCLUDED.workout_id, achieved_at = EXCLUDED.achieved_at, updated_at = now()
+       WHERE (personal_records.one_rm, personal_records.weight, personal_records.reps,
+              personal_records.workout_id, personal_records.achieved_at)
+         IS DISTINCT FROM (EXCLUDED.one_rm, EXCLUDED.weight, EXCLUDED.reps,
+                           EXCLUDED.workout_id, EXCLUDED.achieved_at)`,
+      [userId, exerciseId, set.oneRm, set.weight, set.reps, set.workout_id, set.date]);
   }
+  return best;
 };
 
 export const updateWorkout = async (workoutId, userId, { title, date, notes }) => {
@@ -300,20 +307,31 @@ export const updateWorkout = async (workoutId, userId, { title, date, notes }) =
   if (!fields.length) throw new ApiError(400, 'Нет полей для обновления');
 
   params.push(workoutId, userId);
-  const { rows } = await query(
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+  const { rows } = await client.query(
     `UPDATE workouts SET ${fields.join(', ')}
      WHERE id = $${params.length - 1} AND user_id = $${params.length}
      RETURNING *`,
     params
   );
   if (!rows.length) throw new ApiError(404, 'Тренировка не найдена');
+  await recomputeRecords(client, userId);
+  await client.query('COMMIT');
   return rows[0];
+  } catch (error) {
+    await client.query('ROLLBACK'); throw error;
+  } finally { client.release(); }
 };
 
 export const updateWorkoutStatus = async (workoutId, userId, status) => {
+  if (status === 'in_progress') return startWorkout(workoutId, userId);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
 
     const { rows } = await client.query(
       `UPDATE workouts SET status = $1 WHERE id = $2 AND user_id = $3 RETURNING *`,
@@ -322,13 +340,7 @@ export const updateWorkoutStatus = async (workoutId, userId, status) => {
     if (!rows.length) throw new ApiError(404, 'Тренировка не найдена');
     const workout = rows[0];
 
-    if (status === 'completed') {
-      await recomputeRecordsForWorkout(client, {
-        workoutId, 
-        userId,
-        date: workout.date,
-      });
-    }
+    await recomputeRecords(client, userId);
 
     await client.query('COMMIT');
     return workout;
@@ -341,58 +353,24 @@ export const updateWorkoutStatus = async (workoutId, userId, status) => {
 };
 
 export const deleteWorkout = async (workoutId, userId) => {
-  const { rows } = await query(
-    `DELETE FROM workouts WHERE id = $1 AND user_id = $2 RETURNING id`,
-    [workoutId, userId]
-  );
-  if (!rows.length) throw new ApiError(404, 'Тренировка не найдена');
-};
-
-const claimPersonalRecord = async (client, { userId, set, date }) => {
-  if (!set.is_completed) return null;
-
-  const weight = Number(set.weight);
-  const reps = Number(set.reps);
-  const oneRm = estimateOneRepMax(weight, reps);
-  if (!(oneRm > 0)) return null;
-
-  const { rows: prevRows } = await client.query(
-    `SELECT one_rm FROM personal_records WHERE user_id = $1 AND exercise_id = $2`,
-    [userId, set.exercise_id]
-  );
-  const previous = prevRows[0] ? Number(prevRows[0].one_rm) : null;
-
-  const { rows } = await client.query(
-    `INSERT INTO personal_records
-       (user_id, exercise_id, one_rm, weight, reps, workout_id, achieved_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (user_id, exercise_id) DO UPDATE SET
-       one_rm      = EXCLUDED.one_rm,
-       weight      = EXCLUDED.weight,
-       reps        = EXCLUDED.reps,
-       workout_id  = EXCLUDED.workout_id,
-       achieved_at = EXCLUDED.achieved_at,
-       updated_at  = now()
-     WHERE EXCLUDED.one_rm > personal_records.one_rm
-     RETURNING one_rm`,
-    [userId, set.exercise_id, oneRm.toFixed(2), weight, reps, set.workout_id, date]
-  );
-
-  if (!rows.length) return null;
-
-  return {
-    exerciseId: set.exercise_id,
-    oneRm: Number(rows[0].one_rm),
-    previousOneRm: previous,
-    weight,
-    reps,
-  };
-};
-
-export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, weight, reps, rpe, durationSec, isCompleted, orderIndex, setKind, parentSetId }) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    const { rows } = await client.query(
+      `DELETE FROM workouts WHERE id = $1 AND user_id = $2 RETURNING id`, [workoutId, userId]);
+    if (!rows.length) throw new ApiError(404, 'Тренировка не найдена');
+    await recomputeRecords(client, userId);
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
+};
+
+export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, weight, reps, rpe, durationSec, isCompleted, orderIndex, setKind, parentSetId, clientId }) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
 
     const { rows: workoutRows } = await client.query(
       `SELECT id, date FROM workouts WHERE id = $1 AND user_id = $2`,
@@ -401,6 +379,8 @@ export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, w
     const workout = workoutRows[0];
     if (!workout) throw new ApiError(404, 'Тренировка не найдена');
 
+    const { rows: previousRecords } = await client.query(
+      'SELECT exercise_id, one_rm FROM personal_records WHERE user_id = $1', [userId]);
     let set;
 
     if (setId) {
@@ -438,21 +418,31 @@ export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, w
       if (parentSetId) {
         const { rows: parentRows } = await client.query(
           `SELECT id, exercise_id, order_index, group_index, round_index
-             FROM workout_sets WHERE id = $1 AND workout_id = $2`,
+             FROM workout_sets WHERE id = $1 AND workout_id = $2 AND set_kind = 'normal'`,
           [parentSetId, workoutId]
         );
         parent = parentRows[0];
         if (!parent) throw new ApiError(404, 'Основной подход не найден');
       }
 
+      const { rows: positions } = await client.query(
+        `SELECT COALESCE((SELECT group_index FROM workout_sets
+              WHERE workout_id = $1 AND exercise_id = $2 AND set_kind = 'normal'
+              ORDER BY order_index LIMIT 1),
+             (SELECT COALESCE(max(group_index), -1) + 1 FROM workout_sets WHERE workout_id = $1)) AS group_index,
+          (SELECT COALESCE(max(round_index), -1) + 1 FROM workout_sets
+            WHERE workout_id = $1 AND exercise_id = $2 AND set_kind = 'normal') AS round_index`,
+        [workoutId, parent ? parent.exercise_id : exerciseId]);
       const { rows } = await client.query(
         `INSERT INTO workout_sets
            (workout_id, exercise_id, order_index, weight, reps, rpe, duration_sec, is_completed,
-            set_kind, parent_set_id, group_index, round_index)
+            set_kind, parent_set_id, group_index, round_index, id)
          VALUES (
             $1, $2,
             COALESCE($3, (SELECT COALESCE(MAX(order_index), -1) + 1 FROM workout_sets WHERE workout_id = $1)),
-            $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            $4, $5, $6, $7, $8, $9, $10, $11, $12, COALESCE($13::uuid, gen_random_uuid()))
+         ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+           WHERE workout_sets.workout_id = EXCLUDED.workout_id
          RETURNING *`,
         [
           workoutId,
@@ -465,14 +455,23 @@ export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, w
           isCompleted ?? false,
           parent ? 'drop' : setKind ?? 'normal',
           parent ? parent.id : null,
-          parent ? parent.group_index : 0,
-          parent ? parent.round_index : 0,
+          parent ? parent.group_index : positions[0].group_index,
+          parent ? parent.round_index : positions[0].round_index,
+          clientId ?? null,
         ]
       );
+      if (!rows.length) throw new ApiError(409, 'Идентификатор подхода уже используется');
       set = rows[0];
     }
 
-    const record = await claimPersonalRecord(client, { userId, set, date: workout.date });
+    const best = await recomputeRecords(client, userId);
+    const previous = previousRecords.find((r) => r.exercise_id === set.exercise_id);
+    const winner = best.get(set.exercise_id);
+    const record = winner && winner.id === set.id && winner.oneRm > Number(previous?.one_rm ?? 0)
+      ? { exerciseId: set.exercise_id, oneRm: winner.oneRm,
+          previousOneRm: previous ? Number(previous.one_rm) : null,
+          weight: Number(set.weight), reps: set.reps }
+      : null;
 
     await client.query('COMMIT');
     return { set, record };
@@ -485,11 +484,16 @@ export const upsertWorkoutSet = async ({ workoutId, userId, setId, exerciseId, w
 };
 
 export const deleteWorkoutSet = async (setId, workoutId, userId) => {
-  const { rows: workoutRows } = await query(
-    `SELECT id FROM workouts WHERE id = $1 AND user_id = $2`,
-    [workoutId, userId]
-  );
-  if (!workoutRows.length) throw new ApiError(404, 'Тренировка не найдена');
-
-  await query(`DELETE FROM workout_sets WHERE id = $1 AND workout_id = $2`, [setId, workoutId]);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    const { rows } = await client.query(
+      'SELECT id FROM workouts WHERE id = $1 AND user_id = $2 FOR UPDATE', [workoutId, userId]);
+    if (!rows.length) throw new ApiError(404, 'Тренировка не найдена');
+    await client.query('DELETE FROM workout_sets WHERE id = $1 AND workout_id = $2', [setId, workoutId]);
+    await recomputeRecords(client, userId);
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
 };

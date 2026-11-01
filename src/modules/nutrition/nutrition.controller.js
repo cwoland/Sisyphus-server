@@ -12,7 +12,8 @@ import {
 } from './nutrition.service.js';
 
 const entrySchema = z.object({
-  date: z.string(),
+  clientId: z.string().uuid().optional(),
+  date: z.iso.date(),
   mealType: z.enum(['breakfast', 'lunch', 'dinner', 'snack']),
   name: z.string().min(1).max(200),
   calories: z.number().int().min(0),

@@ -1,27 +1,38 @@
 import axios from 'axios';
-import { query } from '../../config/db.js';
+import { query, pool } from '../../config/db.js';
 import { env } from '../../config/env.js';
 import { ApiError } from '../../utils/apiError.js';
 
 const openRouterClient = axios.create({
   baseURL: 'https://openrouter.ai/api/v1',
+  timeout: 75_000,
   headers: {
     Authorization: `Bearer ${env.openRouterApiKey}`,
     'Content-Type': 'application/json',
   },
 });
 
-const buildSystemPrompt = async (contextType, contextId, userId) => {
+const buildSystemPrompt = async (contextType, contextId, userId, execute = query) => {
   const base = 'Ты — ассистент фитнес-приложения Sisyphus. Отвечай кратко, по делу, на русском языке, если пользователь не пишет на другом.';
 
-  if (contextType === 'free' || !contextId) {
+  if (contextType === 'free') {
     return base;
   }
 
+  if (['program', 'workout'].includes(contextType) && !contextId) {
+    throw new ApiError(400, 'Выберите программу или тренировку для контекста');
+  }
+
   if (contextType === 'program') {
-    const { rows } = await query(
+    const { rows } = await execute(
       `SELECT p.title, p.description,
-         json_agg(json_build_object('title', pd.title, 'day_index', pd.day_index)) AS days
+         json_agg(json_build_object('title', pd.title, 'day_index', pd.day_index,
+           'exercises', (SELECT json_agg(json_build_object('name', e.name,
+             'sets', pe.target_sets, 'reps', pe.target_reps, 'group', pe.group_index)
+             ORDER BY pe.order_index)
+             FROM program_exercises pe JOIN exercises e ON e.id = pe.exercise_id
+             WHERE pe.program_day_id = pd.id)) ORDER BY pd.day_index)
+           FILTER (WHERE pd.id IS NOT NULL) AS days
        FROM programs p
        LEFT JOIN program_days pd ON pd.program_id = p.id
        WHERE p.id = $1 AND p.owner_id = $2
@@ -35,7 +46,7 @@ const buildSystemPrompt = async (contextType, contextId, userId) => {
   }
 
   if (contextType === 'workout') {
-    const { rows } = await query(
+    const { rows } = await execute(
       `SELECT w.title, w.date, w.status,
          json_agg(json_build_object('exercise', e.name, 'weight', ws.weight, 'reps', ws.reps)) AS sets
        FROM workouts w
@@ -52,7 +63,7 @@ const buildSystemPrompt = async (contextType, contextId, userId) => {
   }
 
   if (contextType === 'nutrition') {
-    const { rows } = await query(
+    const { rows } = await execute(
       `SELECT date, meal_type, name, calories, protein, fat, carbs
        FROM nutrition_entries
        WHERE user_id = $1 AND date >= CURRENT_DATE - INTERVAL '7 days'
@@ -67,6 +78,7 @@ const buildSystemPrompt = async (contextType, contextId, userId) => {
 };
 
 export const createConversation = async (userId, { contextType, contextId, title }) => {
+  if (['program', 'workout'].includes(contextType)) await buildSystemPrompt(contextType, contextId, userId);
   const { rows } = await query(
     `INSERT INTO ai_conversations (user_id, context_type, context_id, title)
      VALUES ($1, $2, $3, $4)
@@ -99,50 +111,46 @@ export const getConversationMessages = async (conversationId, userId) => {
 };
 
 export const sendMessageToAI = async (conversationId, userId, userMessage) => {
-  const { rows: convRows } = await query(
-    `SELECT * FROM ai_conversations WHERE id = $1 AND user_id = $2`,
-    [conversationId, userId]
-  );
-  const conversation = convRows[0];
-  if (!conversation) throw new ApiError(404, 'Диалог не найден');
-
-  await query(
-    `INSERT INTO ai_messages (conversation_id, role, content) VALUES ($1, 'user', $2)`,
-    [conversationId, userMessage]
-  );
-
-  const { rows: history } = await query(
-    `SELECT role, content FROM ai_messages WHERE conversation_id = $1 ORDER BY created_at ASC LIMIT 20`,
-    [conversationId]
-  );
-
-  const systemPrompt = await buildSystemPrompt(conversation.context_type, conversation.context_id, userId);
-
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    ...history.map((m) => ({ role: m.role, content: m.content })),
-  ];
-
-  let aiResponseText;
+  const client = await pool.connect();
   try {
-    const { data } = await openRouterClient.post('/chat/completions', {
-      model: env.openRouterModel,
-      messages,
-    });
-    aiResponseText = data.choices[0].message.content;
-  } catch (err) {
-    console.error('OpenRouter error:', err.response?.data || err.message);
-    throw new ApiError(502, 'Ошибка при обращении к AI-сервису');
-  }
-
-  const { rows: savedMessage } = await query(
-    `INSERT INTO ai_messages (conversation_id, role, content)
-     VALUES ($1, 'assistant', $2)
-     RETURNING *`,
-    [conversationId, aiResponseText]
-  );
-
-  return savedMessage[0];
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      'SELECT * FROM ai_conversations WHERE id = $1 AND user_id = $2 FOR UPDATE', [conversationId, userId]);
+    const conversation = rows[0];
+    if (!conversation) throw new ApiError(404, 'Диалог не найден');
+    const systemPrompt = await buildSystemPrompt(conversation.context_type, conversation.context_id,
+      userId, client.query.bind(client));
+    const { rows: history } = await client.query(
+      `SELECT role, content FROM (
+         SELECT role, content, created_at, id FROM ai_messages WHERE conversation_id = $1
+         ORDER BY created_at DESC, id DESC LIMIT 20
+       ) recent ORDER BY created_at ASC, id ASC`, [conversationId]);
+    let aiResponseText;
+    try {
+      const { data } = await openRouterClient.post('/chat/completions', {
+        model: env.openRouterModel,
+        messages: [{ role: 'system', content: systemPrompt }, ...history,
+          { role: 'user', content: userMessage }],
+      });
+      aiResponseText = data.choices?.[0]?.message?.content;
+      if (typeof aiResponseText !== 'string' || !aiResponseText.trim()) throw new Error('Empty response');
+    } catch (error) {
+      console.error('OpenRouter error:', error.message);
+      throw new ApiError(502, 'Ошибка при обращении к AI-сервису');
+    }
+    // Save the pair only after a successful response. Failed retries leave no orphan questions.
+    await client.query(
+      `INSERT INTO ai_messages (conversation_id, role, content, created_at)
+       VALUES ($1, 'user', $2, clock_timestamp())`, [conversationId, userMessage]);
+    const { rows: saved } = await client.query(
+      `INSERT INTO ai_messages (conversation_id, role, content, created_at)
+       VALUES ($1, 'assistant', $2, clock_timestamp()) RETURNING *`, [conversationId, aiResponseText]);
+    await client.query('COMMIT');
+    return saved[0];
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
 };
 
 export const deleteConversation = async (conversationId, userId) => {

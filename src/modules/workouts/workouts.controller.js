@@ -16,20 +16,21 @@ import {
 } from './workouts.service.js';
 
 const createWorkoutSchema = z.object({
+  clientId: z.string().uuid().optional(),
   title: z.string().min(1).max(150),
-  date: z.string(),
+  date: z.iso.date(),
   notes: z.string().optional(),
 });
 
 const updateWorkoutSchema = z.object({
   title: z.string().min(1).max(150).optional(),
-  date: z.string().optional(),
+  date: z.iso.date().optional(),
   notes: z.string().nullable().optional(),
 });
 
 const scheduleSchema = z.object({
   programId: z.string().uuid(),
-  startDate: z.string(),
+  startDate: z.iso.date(),
   weekdays: z.array(z.number().int().min(0).max(6)).min(1),
   weeksCount: z.number().int().min(1).max(52),
 });
@@ -39,17 +40,19 @@ const statusSchema = z.object({
 });
 
 const setSchema = z.object({
+  clientId: z.string().uuid().optional(),
   setId: z.string().uuid().optional(),
   exerciseId: z.string().uuid().optional(),
-  weight: z.number().nullable().optional(),
-  reps: z.number().int().nullable().optional(),
+  weight: z.number().min(0).max(9999).nullable().optional(),
+  reps: z.number().int().min(0).max(10000).nullable().optional(),
   rpe: z.number().min(1).max(10).nullable().optional(),
   durationSec: z.number().int().min(0).max(86400).nullable().optional(),
   isCompleted: z.boolean().optional(),
   orderIndex: z.number().int().optional(),
   setKind: z.enum(['normal', 'drop']).optional(),
   parentSetId: z.string().uuid().optional(),
-});
+}).refine((s) => s.setId || s.exerciseId || s.parentSetId, 'Укажите упражнение или подход')
+  .refine((s) => s.setKind !== 'drop' || s.parentSetId, 'Дроп должен иметь основной подход');
 
 export const getWorkouts = asyncHandler(async (req, res) => {
   const { from, to } = req.query;

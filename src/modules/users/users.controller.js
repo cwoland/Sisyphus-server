@@ -5,6 +5,9 @@ import { isUsernameTaken, generateRefreshToken } from '../auth/auth.service.js';
 import { REFRESH_COOKIE_OPTIONS } from '../auth/auth.controller.js';
 
 const profileSchema = z.object({
+  timeZone: z.string().max(100).refine((value) => {
+    try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; }
+  }, 'Некорректный часовой пояс').optional(),
   name: z.string().min(2).max(100).optional(),
   username: z.string().min(3).max(20).regex(/^[a-zA-Z0-9_]+$/, 'Только латиница, цифры и _').optional(),
   avatarUrl: z.string().max(255).nullable().optional(),

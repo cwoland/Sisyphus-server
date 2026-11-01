@@ -10,6 +10,7 @@ import {
   findUserById,
   isUsernameTaken
 } from './auth.service.js';
+import { query } from '../../config/db.js';
 import { env } from '../../config/env.js';
 
 const registerSchema = z.object({
@@ -29,7 +30,7 @@ const loginSchema = z.object({
 
 export const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
+  secure: env.nodeEnv === 'production',
   sameSite: 'lax',
   maxAge: 30 * 24 * 60 * 60 * 1000,
   path: '/api/auth',
@@ -111,8 +112,13 @@ export const refresh = async (req, res, next) => {
 export const logout = async (req, res, next) => {
   try {
     const rawToken = req.cookies.refreshToken;
-    if (rawToken) await revokeRefreshToken(rawToken);
-    res.clearCookie('refreshToken', { path: '/api/auth' });
+    const stored = rawToken ? await verifyRefreshToken(rawToken) : null;
+    if (stored && typeof req.body?.pushEndpoint === 'string') {
+      await query('DELETE FROM push_subscriptions WHERE user_id = $1 AND endpoint = $2',
+        [stored.user_id, req.body.pushEndpoint]);
+    }
+    const { maxAge: _maxAge, ...cookieOptions } = REFRESH_COOKIE_OPTIONS;
+    res.clearCookie('refreshToken', cookieOptions);
     res.status(204).send();
   } catch (err) {
     next(err);

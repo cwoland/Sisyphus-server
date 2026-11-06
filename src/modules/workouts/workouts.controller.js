@@ -50,6 +50,7 @@ const setSchema = z.object({
   isCompleted: z.boolean().optional(),
   orderIndex: z.number().int().optional(),
   setKind: z.enum(['normal', 'drop']).optional(),
+  setRole: z.enum(['normal', 'warmup', 'failure']).optional(),
   parentSetId: z.string().uuid().optional(),
 }).refine((s) => s.setId || s.exerciseId || s.parentSetId, 'Укажите упражнение или подход')
   .refine((s) => s.setKind !== 'drop' || s.parentSetId, 'Дроп должен иметь основной подход');

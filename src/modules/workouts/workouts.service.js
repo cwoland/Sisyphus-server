@@ -706,6 +706,7 @@ export const upsertWorkoutSet = async ({
   isCompleted,
   orderIndex,
   setKind,
+  setRole,
   parentSetId,
   clientId,
 }) => {
@@ -732,6 +733,22 @@ export const upsertWorkoutSet = async ({
 
     if (!workout) {
       throw new ApiError(404, 'Тренировка не найдена');
+    }
+
+    if (setRole && setRole !== 'normal') {
+      if (parentSetId || setKind === 'drop') {
+        throw new ApiError(400, 'У дроп-подхода нельзя изменить роль');
+      }
+      if (setId) {
+        const { rows: existing } = await client.query(
+          'SELECT set_kind FROM workout_sets WHERE id = $1 AND workout_id = $2',
+          [setId, workoutId]
+        );
+        if (!existing.length) throw new ApiError(404, 'Сет не найден');
+        if (existing[0].set_kind === 'drop') {
+          throw new ApiError(400, 'У дроп-подхода нельзя изменить роль');
+        }
+      }
     }
 
     const { rows: previousRecords } = await client.query(
@@ -761,6 +778,7 @@ export const upsertWorkoutSet = async ({
       put('rpe', rpe);
       put('duration_sec', durationSec);
       put('is_completed', isCompleted);
+      put('set_role', setRole);
 
       if (!fields.length) {
         throw new ApiError(400, 'Нет полей для обновления');
@@ -859,7 +877,8 @@ export const upsertWorkoutSet = async ({
             parent_set_id,
             group_index,
             round_index,
-            id
+            id,
+            set_role
           )
           VALUES (
             $1,
@@ -881,7 +900,8 @@ export const upsertWorkoutSet = async ({
             $10,
             $11,
             $12,
-            COALESCE($13::uuid, gen_random_uuid())
+            COALESCE($13::uuid, gen_random_uuid()),
+            $14
           )
           ON CONFLICT (id)
           DO UPDATE SET id = EXCLUDED.id
@@ -906,6 +926,7 @@ export const upsertWorkoutSet = async ({
             ? parent.round_index
             : positions[0].round_index,
           clientId ?? null,
+          setRole ?? 'normal',
         ]
       );
 

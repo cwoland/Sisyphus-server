@@ -261,20 +261,30 @@ export const createProgram = async ({
 };
 
 export const deleteProgram = async (programId, userId) => {
-  const { rows } = await query(
-    `
-      DELETE FROM programs
-      WHERE id = $1 AND owner_id = $2
-      RETURNING id
-    `,
-    [programId, userId]
-  );
-
-  if (!rows.length) {
-    throw new ApiError(
-      404,
-      'Программа не найдена или нет доступа'
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Serialize deletion with scheduling and workout changes for this user.
+    await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    const { rows } = await client.query(
+      'SELECT id FROM programs WHERE id = $1 AND owner_id = $2 FOR UPDATE',
+      [programId, userId]
     );
+    if (!rows.length) throw new ApiError(404, 'Программа не найдена или нет доступа');
+
+    await client.query(
+      `DELETE FROM workouts
+       WHERE user_id = $1 AND status = 'planned'
+         AND program_day_id IN (SELECT id FROM program_days WHERE program_id = $2)`,
+      [userId, programId]
+    );
+    await client.query('DELETE FROM programs WHERE id = $1 AND owner_id = $2', [programId, userId]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
   }
 };
 

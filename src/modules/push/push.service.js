@@ -36,11 +36,11 @@ export const sendPushToUser = async (userId, payload) => {
     )
   );
 
-  results.forEach((result, index) => {
+  await Promise.all(results.map(async (result, index) => {
     if (result.status === 'rejected' && result.reason?.statusCode === 410) {
-      query(`DELETE FROM push_subscriptions WHERE id = $1`, [subscriptions[index].id]).catch(() => {});
+      await query(`DELETE FROM push_subscriptions WHERE id = $1`, [subscriptions[index].id]).catch(() => {});
     }
-  });
+  }));
 
   return results;
 };

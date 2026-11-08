@@ -1,6 +1,7 @@
 import { query } from '../../config/db.js';
 import { ApiError } from '../../utils/apiError.js';
 import { sendPushToUser } from '../push/push.service.js';
+import { runBackground } from '../../utils/runBackground.js';
 
 export const listFriendsFeed = async (userId, { limit = 30, before, beforeId } = {}) => {
   const params = [userId, limit];
@@ -107,8 +108,7 @@ export const addReaction = async (userId, entityType, entityId, rawKind) => {
   );
 
   if (rows[0]?.inserted) {
-    notifyAuthor(userId, entityType, entityId, kind)
-      .catch((err) => console.error('Reaction push failed:', err.message));
+    runBackground(notifyAuthor(userId, entityType, entityId, kind), 'Reaction push failed');
   }
 
   return { kind };

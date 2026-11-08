@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authGuard } from '../../middlewares/auth.middleware.js';
 import rateLimit from 'express-rate-limit';
+import { PostgresRateLimitStore } from '../../middlewares/postgresRateLimitStore.js';
 import {
   postConversation,
   getConversations,
@@ -12,6 +13,7 @@ import {
 const router = Router();
 
 const aiLimiter = rateLimit({
+  store: new PostgresRateLimitStore('ai'),
   windowMs: 60 * 1000,
   max: 15,
   message: { message: 'Слишком много запросов к AI, подождите немного' },

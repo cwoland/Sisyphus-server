@@ -1,6 +1,7 @@
 import { query } from '../../config/db.js';
 import { ApiError } from '../../utils/apiError.js';
 import { sendPushToUser } from '../push/push.service.js';
+import { runBackground } from '../../utils/runBackground.js';
 
 const areFriends = async (userA, userB) => {
   const { rows } = await query(
@@ -113,11 +114,11 @@ export const sendMessage = async (chatId, senderId, text) => {
   );
   const senderName = senderRows[0]?.name || 'Новое сообщение';
 
-  sendPushToUser(recipientId, {
+  runBackground(sendPushToUser(recipientId, {
     title: senderName,
     body: text.length > 80 ? text.slice(0, 79) + '…' : text,
     url: `/chat?chat=${chatId}`,
-  }).catch((err) => console.error('Chat push failed:', err.message));
+  }), 'Chat push failed');
 
   return message;
 };

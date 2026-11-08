@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authGuard } from '../../middlewares/auth.middleware.js';
+import { listOfficial, getOfficial, copyOfficial } from './official.controller.js';
 import {
     getMyPrograms,
     getProgram,
@@ -16,6 +17,9 @@ router.use(authGuard);
 
 router.get('/', getMyPrograms);
 router.get('/public', getPublicPrograms);
+router.get('/official', listOfficial);
+router.get('/official/:slug', getOfficial);
+router.post('/official/:slug/copy', copyOfficial);
 router.get('/:id', getProgram);
 router.post('/', postProgram);
 router.put('/:id', putProgram);

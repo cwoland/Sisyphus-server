@@ -72,7 +72,7 @@ const responseJsonSchema = {
                                     type: 'string',
                                 },
                                 targetSets: {
-                                    type: 'string',
+                                    type: 'integer',
                                 },
                                 targetReps: {
                                     type: 'string',

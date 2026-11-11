@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { authGuard } from '../../middlewares/auth.middleware.js';
 import rateLimit from 'express-rate-limit';
 import { PostgresRateLimitStore } from '../../middlewares/postgresRateLimitStore.js';
-import { asyncHandler } from '../../middlewares/asyncHandler.middleware.js';
+import { asyncHandler } from '../../utils/asyncHandler.js';
 import {
   postConversation,
   getConversations,

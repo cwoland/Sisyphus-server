@@ -1,5 +1,6 @@
 import { query } from '../../config/db.js';
 import { searchOff, fetchOffProduct } from './off.client.js';
+import { listFoodChoices } from './food-picker.service.js';
 
 const LOCAL_LIMIT = 20;
 
@@ -9,7 +10,7 @@ const cacheProducts = async (products) => {
   const values = [];
   const params = [];
 
-  for (const p of products) {
+  for (const p of new Map(products.map((item) => [item.barcode, item])).values()) {
     params.push(p.barcode, p.name, p.brand, p.kcal_100g, p.protein_100g, p.fat_100g, p.carbs_100g);
     const base = params.length - 7;
     values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`);
@@ -29,6 +30,12 @@ const cacheProducts = async (products) => {
     params
   );
 };
+
+export async function getFoodChoices(userId, term) {
+  const remote = term.length >= 3 ? await searchOff(term) : [];
+  await cacheProducts(remote);
+  return listFoodChoices(userId, term, { remoteCodes: remote.map((p) => p.barcode) });
+}
 
 const searchLocal = async (term) => {
   const { rows } = await query(

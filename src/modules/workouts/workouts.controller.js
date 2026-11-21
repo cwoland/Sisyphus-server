@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { asyncHandler } from '../../utils/asyncHandler.js';
+import { changeActiveExercise } from './exercise-change.service.js';
 import {
   listWorkouts,
   getWorkoutWithSets,
@@ -37,6 +38,19 @@ const scheduleSchema = z.object({
 
 const statusSchema = z.object({
   status: z.enum(['planned', 'in_progress', 'completed', 'skipped']),
+});
+
+const changeSchema = z.object({
+  requestId: z.string().uuid(),
+  anchorId: z.string().uuid(),
+  exerciseId: z.string().uuid(),
+  replacementId: z.string().uuid().nullable(),
+}).strict();
+
+export const patchActiveExercise = asyncHandler(async (req, res) => {
+  const workoutId = z.string().uuid().parse(req.params.id);
+  const workout = await changeActiveExercise(workoutId, req.userId, changeSchema.parse(req.body));
+  res.json({ workout });
 });
 
 const setSchema = z.object({

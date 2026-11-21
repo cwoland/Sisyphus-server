@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
+import { MigrationBuilder } from 'node-pg-migrate';
+import { up as activeExerciseMigration } from '../migrations/1794400000000_active-exercise-changes.js';
+import { planExerciseChange } from '../src/modules/workouts/exercise-change.js';
+import { materializeSetsFromProgramDay } from '../src/modules/programs/program-plan.js';
 import { estimateOneRepMax } from '../src/utils/oneRepMax.js';
 import { up as reliabilityMigration } from '../migrations/1793900000000_workout-reliability.js';
 import { ApiError } from '../src/utils/apiError.js';
@@ -22,20 +26,22 @@ async function loadService(path, dependencies) {
 const db = new PGlite({ parsers: { 1082: (value) => value } });
 await db.exec(`
 CREATE TABLE users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), settings jsonb DEFAULT '{}'::jsonb);
-CREATE TABLE exercises (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, muscle_group text, equipment text, tracking text);
+CREATE TABLE exercises (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, muscle_group text, muscle_detail text,
+ created_by uuid, equipment text, tracking text);
 CREATE TABLE programs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id uuid REFERENCES users,
  title text, description text, is_public boolean DEFAULT false, kind text, updated_at timestamptz DEFAULT now());
 CREATE TABLE program_days (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), program_id uuid REFERENCES programs ON DELETE CASCADE,
  day_index int, title text);
 CREATE TABLE program_exercises (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), program_day_id uuid REFERENCES program_days ON DELETE CASCADE,
- exercise_id uuid REFERENCES exercises, order_index int, target_sets int, target_reps text, notes text, group_index int);
+ exercise_id uuid REFERENCES exercises, order_index int, target_sets int, target_reps text, notes text, group_index int, set_plan jsonb);
 CREATE TABLE workouts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid REFERENCES users,
  program_day_id uuid REFERENCES program_days ON DELETE SET NULL, title text, date date, notes text,
  status text DEFAULT 'planned', started_at timestamptz);
 CREATE TABLE workout_sets (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workout_id uuid REFERENCES workouts ON DELETE CASCADE,
  exercise_id uuid REFERENCES exercises, order_index int DEFAULT 0, group_index int DEFAULT 0, round_index int DEFAULT 0,
  weight numeric, reps int, rpe numeric, duration_sec int, is_completed boolean DEFAULT false, set_kind text DEFAULT 'normal',
- parent_set_id uuid REFERENCES workout_sets ON DELETE CASCADE, created_at timestamptz DEFAULT now());
+ parent_set_id uuid REFERENCES workout_sets ON DELETE CASCADE, created_at timestamptz DEFAULT now(),
+ set_role text DEFAULT 'normal', rest_after_sec int, target_reps text);
 CREATE TABLE personal_records (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid REFERENCES users,
  exercise_id uuid REFERENCES exercises, one_rm numeric, weight numeric, reps int,
  workout_id uuid REFERENCES workouts ON DELETE SET NULL, achieved_at date, updated_at timestamptz DEFAULT now(),
@@ -48,9 +54,14 @@ CREATE TABLE ai_messages (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), convers
  role text, content text, created_at timestamptz DEFAULT now());
 `);
 const query = async (sql, params) => db.query(sql, params);
+const migration = new MigrationBuilder({ query }, undefined, false, console);
+activeExerciseMigration(migration);
+await db.exec(migration.getSql());
 const client = { query, release() {} };
 const pool = { connect: async () => client };
-const workouts = await loadService('../src/modules/workouts/workouts.service.js', { query, pool, ApiError, estimateOneRepMax });
+const workouts = await loadService('../src/modules/workouts/workouts.service.js', { query, pool, ApiError, estimateOneRepMax, materializeSetsFromProgramDay });
+const { changeActiveExercise } = await loadService('../src/modules/workouts/exercise-change.service.js',
+  { pool, ApiError, getWorkoutWithSets: workouts.getWorkoutWithSets, planExerciseChange });
 const programs = await loadService('../src/modules/programs/programs.service.js', { query, pool, ApiError });
 const nutrition = await loadService('../src/modules/nutrition/nutrition.service.js', { query, ApiError });
 const user = id(), other = id(), exercise = id(), exerciseB = id();
@@ -58,6 +69,44 @@ await query('INSERT INTO users (id) VALUES ($1), ($2)', [user, other]);
 await query("INSERT INTO exercises (id, name, tracking) VALUES ($1, 'A', 'weight_reps'), ($2, 'B', 'weight_reps')", [exercise, exerciseB]);
 
 test('server repairs against isolated PostgreSQL', async (t) => {
+  await t.test('active skip and replacement preserve history, ownership, round partners and retry results', async () => {
+    const w = await workouts.createWorkout({ userId: user, title: 'Session edits', date: '2026-11-20' });
+    const target = id(), privateTarget = id();
+    await query("INSERT INTO exercises (id,name,created_by) VALUES ($1,'Replacement',NULL),($2,'Private',$3)", [target, privateTarget, other]);
+    const a = id(), drop = id(), a2 = id(), a2drop = id(), b = id();
+    await query(`INSERT INTO workout_sets (id,workout_id,exercise_id,round_index,is_completed,set_kind,parent_set_id,weight) VALUES
+      ($1,$6,$7,0,true,'normal',NULL,50), ($2,$6,$7,0,false,'drop',$1,40),
+      ($3,$6,$7,1,false,'normal',NULL,50), ($4,$6,$7,1,false,'drop',$3,40),
+      ($5,$6,$8,0,false,'normal',NULL,10)`, [a,drop,a2,a2drop,b,w.id,exercise,exerciseB]);
+    const action = { requestId: id(), anchorId: drop, exerciseId: exercise, replacementId: target };
+    const change = (body) => changeActiveExercise(w.id,user,body);
+    await assert.rejects(change(action), { status: 409 });
+    await workouts.startWorkout(w.id,user);
+    await assert.rejects(changeActiveExercise(w.id,other,action), { status: 404 });
+    await assert.rejects(change({ ...action, replacementId: privateTarget }), { status: 404 });
+    await assert.rejects(change({ ...action, replacementId: exerciseB }), { status: 409 });
+    const updated = await change(action);
+    const rows = new Map(updated.sets.map((s) => [s.id,s]));
+    assert.ok(!updated.alternatives.some((x) => x.id === privateTarget));
+    assert.equal(rows.get(a).exercise_id, exercise);
+    assert.equal(Number(rows.get(a).weight), 50);
+    assert.ok(rows.get(drop).is_skipped);
+    assert.equal(rows.get(b).is_skipped, false);
+    assert.equal(rows.get(a2).exercise_id, target);
+    assert.equal(rows.get(a2).weight, null);
+    assert.equal(rows.get(a2drop).parent_set_id, a2);
+    assert.equal(rows.get(a2drop).original_exercise_id, exercise);
+    assert.deepEqual((await change(action)).sets, updated.sets);
+    await assert.rejects(change({ ...action, replacementId: null }), { status: 409 });
+    await assert.rejects(workouts.upsertWorkoutSet({workoutId:w.id,userId:user,setId:a2,exerciseId:exercise,isCompleted:true}), { status: 409 });
+    const skip = {requestId:id(),anchorId:a2,exerciseId:target,replacementId:null};
+    const skipped = await change(skip);
+    assert.equal(skipped.sets.filter((s) => s.is_skipped).length, 3);
+    await assert.rejects(workouts.upsertWorkoutSet({workoutId:w.id,userId:user,setId:a2,exerciseId:target,isCompleted:true}), { status: 409 });
+    await workouts.updateWorkoutStatus(w.id,user,'completed');
+    assert.equal((await change(skip)).status, 'completed');
+    await workouts.deleteWorkout(w.id,user);
+  });
   await t.test('migration repairs legacy manual groups and duplicate active sessions', async () => {
     const old = id(), recent = id();
     await query(`INSERT INTO workouts (id, user_id, status, date, started_at) VALUES

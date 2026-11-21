@@ -1,14 +1,36 @@
 import { query } from '../../config/db.js';
 import { ApiError } from '../../utils/apiError.js';
 
-export const listExercises = async ({ muscleGroup, search, userId }) => {
+export const listExercises = async ({ muscleGroup, search, userId, sort }) => {
   const params = [userId];
   const conditions = ['(e.created_by IS NULL OR e.created_by = $1)'];
   if (muscleGroup) { params.push(muscleGroup); conditions.push(`e.muscle_group = $${params.length}`); }
   if (search) { params.push(`%${search}%`); conditions.push(`e.name ILIKE $${params.length}`); }
+  const ranked = sort === 'usage';
   const { rows } = await query(`SELECT e.*, n.technique AS personal_technique
+    ${ranked ? ', COALESCE(u.usage_count, 0) AS usage_count' : ''}
     FROM exercises e LEFT JOIN exercise_technique_notes n ON n.exercise_id = e.id AND n.user_id = $1
-    WHERE ${conditions.join(' AND ')} ORDER BY e.name ASC`, params);
+    ${ranked ? `LEFT JOIN (
+      SELECT exercise_id, count(*)::int AS usage_count FROM (
+        SELECT DISTINCT pe.program_day_id, pe.exercise_id
+        FROM programs p JOIN program_days d ON d.program_id = p.id
+        JOIN program_exercises pe ON pe.program_day_id = d.id
+        WHERE p.owner_id = $1
+        UNION ALL
+        SELECT DISTINCT w.id, s.exercise_id
+        FROM workouts w JOIN workout_sets s ON s.workout_id = w.id
+        WHERE w.user_id = $1 AND NOT s.is_skipped AND (s.is_completed OR NOT EXISTS (
+          SELECT 1 FROM program_exercises template
+          WHERE template.program_day_id = w.program_day_id AND template.exercise_id = s.exercise_id
+        ))
+      ) uses GROUP BY exercise_id
+    ) u ON u.exercise_id = e.id` : ''}
+    WHERE ${conditions.join(' AND ')} ORDER BY e.name ASC, e.id`, params);
+  if (ranked) {
+    const alphabet = new Intl.Collator('ru', { sensitivity: 'base' });
+    rows.sort((a, b) => b.usage_count - a.usage_count ||
+      alphabet.compare(a.name, b.name) || a.id.localeCompare(b.id));
+  }
   return rows;
 };
 

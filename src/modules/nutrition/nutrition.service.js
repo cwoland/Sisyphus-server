@@ -1,4 +1,5 @@
 import { query } from '../../config/db.js';
+import { listFoodChoices } from '../food/food-picker.service.js';
 import { ApiError } from '../../utils/apiError.js';
 
 export const listNutritionEntries = async (userId, { from, to }) => {
@@ -107,26 +108,7 @@ export const updateTargets = async (userId, { calories, protein, fat, carbs }) =
 };
 
 export const listRecentFoods = async (userId, rawQuery) => {
-  const term = (rawQuery || '').trim();
-  const params = [userId];
-  let filter = '';
-
-  if (term.length >= 2) {
-    params.push('%' + term.replace(/[\\%_]/g, '\\$&').toLowerCase() + '%');
-    filter = ` AND lower(name) LIKE $${params.length} ESCAPE '\\'`;
-  }
-
-  const { rows } = await query(
-    `SELECT name, calories, protein, fat, carbs FROM (
-      SELECT DISTINCT ON (lower(name))
-            name, calories, protein, fat, carbs, created_at
-          FROM nutrition_entries
-        WHERE user_id = $1${filter}
-        ORDER BY lower(name), created_at DESC
-      ) t
-      ORDER BY created_at DESC
-      LIMIT 8`,
-      params
-  );
-  return rows;
+  const term = typeof rawQuery === 'string' ? rawQuery.trim() : '';
+  const choices = await listFoodChoices(userId, term, { historyOnly: true });
+  return choices.map(({ key, entry }) => ({ key, ...entry }));
 };

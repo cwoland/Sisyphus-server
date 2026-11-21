@@ -69,6 +69,16 @@ export const getWorkoutWithSets = async (
     [workoutId]
   );
 
+  if (workout.status === 'in_progress') {
+    // The PWA persists the entire workout detail. Include the compact catalog
+    // so that choosing a replacement does not require another request in the gym.
+    const { rows: alternatives } = await execute(
+      `SELECT id, name, muscle_group, muscle_detail, equipment, tracking FROM exercises
+       WHERE created_by IS NULL OR created_by = $1 ORDER BY name, id`,
+      [userId]
+    );
+    return { ...workout, sets, alternatives };
+  }
   return { ...workout, sets };
 };
 
@@ -149,6 +159,8 @@ const prefillSetsFromHistory = async (
       ) lp
       WHERE ws.workout_id = $1
         AND ws.exercise_id = lp.exercise_id
+        AND NOT ws.is_skipped
+        AND ws.original_exercise_id IS NULL
         AND ws.weight IS NULL
         AND ws.reps IS NULL
         AND ws.duration_sec IS NULL
@@ -735,19 +747,21 @@ export const upsertWorkoutSet = async ({
       throw new ApiError(404, 'Тренировка не найдена');
     }
 
-    if (setRole && setRole !== 'normal') {
-      if (parentSetId || setKind === 'drop') {
-        throw new ApiError(400, 'У дроп-подхода нельзя изменить роль');
+    if (setRole && setRole !== 'normal' && (parentSetId || setKind === 'drop')) {
+      throw new ApiError(400, 'У дроп-подхода нельзя изменить роль');
+    }
+    if (setId) {
+      const { rows: [existing] } = await client.query(
+        'SELECT set_kind, is_skipped, exercise_id, original_exercise_id FROM workout_sets WHERE id = $1 AND workout_id = $2',
+        [setId, workoutId]
+      );
+      if (!existing) throw new ApiError(404, 'Сет не найден');
+      if (existing.is_skipped || (exerciseId && exerciseId !== existing.exercise_id) ||
+          (isCompleted && existing.original_exercise_id && !exerciseId)) {
+        throw new ApiError(409, 'Подход пропущен или упражнение изменилось. Обновите тренировку.');
       }
-      if (setId) {
-        const { rows: existing } = await client.query(
-          'SELECT set_kind FROM workout_sets WHERE id = $1 AND workout_id = $2',
-          [setId, workoutId]
-        );
-        if (!existing.length) throw new ApiError(404, 'Сет не найден');
-        if (existing[0].set_kind === 'drop') {
-          throw new ApiError(400, 'У дроп-подхода нельзя изменить роль');
-        }
+      if (setRole && setRole !== 'normal' && existing.set_kind === 'drop') {
+        throw new ApiError(400, 'У дроп-подхода нельзя изменить роль');
       }
     }
 
@@ -811,6 +825,8 @@ export const upsertWorkoutSet = async ({
             SELECT
               id,
               exercise_id,
+              original_exercise_id,
+              is_skipped,
               order_index,
               group_index,
               round_index
@@ -826,6 +842,10 @@ export const upsertWorkoutSet = async ({
 
         if (!parent) {
           throw new ApiError(404, 'Основной подход не найден');
+        }
+        if (parent.is_skipped || (exerciseId && exerciseId !== parent.exercise_id) ||
+            (parent.original_exercise_id && !exerciseId)) {
+          throw new ApiError(409, 'Основной подход пропущен или упражнение изменилось');
         }
       }
 
@@ -878,7 +898,8 @@ export const upsertWorkoutSet = async ({
             group_index,
             round_index,
             id,
-            set_role
+            set_role,
+            original_exercise_id
           )
           VALUES (
             $1,
@@ -901,7 +922,8 @@ export const upsertWorkoutSet = async ({
             $11,
             $12,
             COALESCE($13::uuid, gen_random_uuid()),
-            $14
+            $14,
+            $15
           )
           ON CONFLICT (id)
           DO UPDATE SET id = EXCLUDED.id
@@ -927,6 +949,7 @@ export const upsertWorkoutSet = async ({
             : positions[0].round_index,
           clientId ?? null,
           setRole ?? 'normal',
+          parent?.original_exercise_id ?? null,
         ]
       );
 

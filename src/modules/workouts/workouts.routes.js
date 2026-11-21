@@ -9,6 +9,7 @@ import {
   postScheduleProgram,
   postSyncWorkout,
   patchWorkoutStatus,
+  patchActiveExercise,
   postStartWorkout,
   getActive,
   removeWorkout,
@@ -33,6 +34,7 @@ router.delete('/:id', removeWorkout);
 router.post('/:id/start', postStartWorkout);
 router.post('/:id/sync', postSyncWorkout);
 router.patch('/:id/status', patchWorkoutStatus);
+router.patch('/:id/active-exercise', patchActiveExercise);
 
 router.put('/:id/sets', putWorkoutSet);
 router.delete('/:id/sets/:setId', removeWorkoutSet);

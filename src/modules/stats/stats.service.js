@@ -225,3 +225,30 @@ export const recordVisit = async (userId, localDate = null) => {
 
   return getVisitStreak(userId, localDate);
 };
+
+
+export async function getWeekOverview(userId, date) {
+  const { rows } = await query(
+    `WITH logged AS (
+       SELECT s.id, s.set_role, s.weight, s.reps, e.name, e.muscle_group
+       FROM workouts w JOIN workout_sets s ON s.workout_id = w.id
+       JOIN exercises e ON e.id = s.exercise_id
+       WHERE w.user_id = $1 AND w.status = 'completed'
+         AND w.date >= date_trunc('week', $2::date::timestamp)::date
+         AND w.date < date_trunc('week', $2::date::timestamp)::date + 7
+         AND s.is_completed AND NOT s.is_skipped
+     ), muscles AS (
+       SELECT muscle_group, count(*)::int AS sets FROM logged
+       WHERE set_role IS DISTINCT FROM 'warmup'
+       GROUP BY muscle_group ORDER BY sets DESC, muscle_group
+     )
+     SELECT count(*)::int AS sets, coalesce(sum(weight * reps), 0)::float8 AS tonnage,
+       coalesce((SELECT json_agg(m ORDER BY m.sets DESC, m.muscle_group) FROM muscles m), '[]') AS muscles,
+       (SELECT json_build_object('name', name, 'weight', weight, 'reps', reps)
+        FROM logged WHERE weight > 0 AND reps > 0 AND set_role IS DISTINCT FROM 'warmup'
+        ORDER BY weight DESC, reps DESC, name, id LIMIT 1) AS heaviest
+     FROM logged`,
+    [userId, date]
+  );
+  return rows[0];
+}

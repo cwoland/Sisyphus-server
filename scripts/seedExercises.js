@@ -1,5 +1,7 @@
 import { pool, query } from '../src/config/db.js';
 
+import { techniques } from '../data/exercise-techniques-v1.js';
+
 const EXERCISES = [
   ['Жим штанги лёжа', 'chest', 'barbell'],
   ['Жим штанги в наклоне вверх', 'chest', 'barbell'],
@@ -85,10 +87,10 @@ const run = async () => {
 
   for (const [name, muscleGroup, equipment] of EXERCISES) {
     const { rowCount } = await query(
-      `INSERT INTO exercises (name, muscle_group, equipment, tracking)
-       SELECT $1::text, $2::text, $3::text, $4::text
-       WHERE NOT EXISTS (SELECT 1 FROM exercises WHERE lower(name) = lower($1::text))`,
-      [name, muscleGroup, equipment, trackingFor(name, muscleGroup, equipment)]
+      `INSERT INTO exercises (name, muscle_group, equipment, tracking, technique)
+       SELECT $1::text, $2::text, $3::text, $4::text, $5::text
+       WHERE NOT EXISTS (SELECT 1 FROM exercises WHERE created_by IS NULL AND lower(name) = lower($1::text))`,
+      [name, muscleGroup, equipment, trackingFor(name, muscleGroup, equipment), techniques[name]]
     );
     rowCount ? created++ : skipped++;
   }

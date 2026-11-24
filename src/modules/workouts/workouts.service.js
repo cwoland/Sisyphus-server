@@ -628,7 +628,8 @@ export const updateWorkout = async (
 export const updateWorkoutStatus = async (
   workoutId,
   userId,
-  status
+  status,
+  elapsedSeconds = null
 ) => {
   if (status === 'in_progress') {
     return startWorkout(workoutId, userId);
@@ -647,11 +648,14 @@ export const updateWorkoutStatus = async (
     const { rows } = await client.query(
       `
         UPDATE workouts
-        SET status = $1
+        SET status = $1,
+            elapsed_seconds = CASE WHEN $1 = 'completed'
+              THEN COALESCE(elapsed_seconds, $4::integer) END,
+            started_at = CASE WHEN $1 = 'planned' THEN NULL ELSE started_at END
         WHERE id = $2 AND user_id = $3
         RETURNING *
       `,
-      [status, workoutId, userId]
+      [status, workoutId, userId, elapsedSeconds]
     );
 
     if (!rows.length) {

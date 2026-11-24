@@ -9,6 +9,8 @@ for (const key of required) {
 }
 
 export const env = {
+    supabaseUrl: process.env.SUPABASE_URL,
+    storageKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     port: process.env.PORT || 5000,
     databaseUrl: process.env.DATABASE_URL,
     jwtAccessSecret: process.env.JWT_ACCESS_SECRET,

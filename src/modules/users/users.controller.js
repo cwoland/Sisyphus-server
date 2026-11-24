@@ -5,6 +5,7 @@ import { isUsernameTaken, generateRefreshToken } from '../auth/auth.service.js';
 import { REFRESH_COOKIE_OPTIONS } from '../auth/auth.controller.js';
 
 const profileSchema = z.object({
+  heightCm: z.number().min(50).max(260).optional(),
   timeZone: z.string().max(100).refine((value) => {
     try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; }
   }, 'Некорректный часовой пояс').optional(),

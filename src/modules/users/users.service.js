@@ -2,14 +2,14 @@ import { query } from '../../config/db.js';
 import { ApiError } from '../../utils/apiError.js';
 import { hashPassword, comparePassword } from '../auth/auth.service.js';
 
-export const updateProfile = async (userId, { name, username, avatarUrl, timeZone }) => {
+export const updateProfile = async (userId, { name, username, avatarUrl, timeZone, heightCm }) => {
   const fields = [];
   const params = [];
   if (name !== undefined)      { params.push(name);                  fields.push(`name = $${params.length}`); }
   if (username !== undefined)  { params.push(username.toLowerCase()); fields.push(`username = $${params.length}`); }
   if (avatarUrl !== undefined) { params.push(avatarUrl);             fields.push(`avatar_url = $${params.length}`); }
-  if (timeZone !== undefined) {
-    params.push(JSON.stringify({ timeZone }));
+  if (timeZone !== undefined || heightCm !== undefined) {
+    params.push(JSON.stringify({ timeZone, heightCm }));
     fields.push(`settings = COALESCE(settings, '{}'::jsonb) || $${params.length}::jsonb`);
   }
   if (!fields.length) throw new ApiError(400, 'Нет полей для обновления');

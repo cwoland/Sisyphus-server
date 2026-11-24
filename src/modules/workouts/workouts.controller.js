@@ -38,6 +38,7 @@ const scheduleSchema = z.object({
 
 const statusSchema = z.object({
   status: z.enum(['planned', 'in_progress', 'completed', 'skipped']),
+  elapsedSeconds: z.number().int().min(0).max(2147483647).optional(),
 });
 
 const changeSchema = z.object({
@@ -114,8 +115,8 @@ export const postSyncWorkout = asyncHandler(async (req, res) => {
 });
 
 export const patchWorkoutStatus = asyncHandler(async (req, res) => {
-  const { status } = statusSchema.parse(req.body);
-  const workout = await updateWorkoutStatus(req.params.id, req.userId, status);
+  const { status, elapsedSeconds } = statusSchema.parse(req.body);
+  const workout = await updateWorkoutStatus(req.params.id, req.userId, status, elapsedSeconds);
   res.json({ workout });
 });
 

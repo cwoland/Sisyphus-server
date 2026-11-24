@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { MigrationBuilder } from 'node-pg-migrate';
 import { up as activeExerciseMigration } from '../migrations/1794400000000_active-exercise-changes.js';
+import { up as elapsedMigration } from '../migrations/1794500000000_workout_elapsed.js';
 import { planExerciseChange } from '../src/modules/workouts/exercise-change.js';
 import { materializeSetsFromProgramDay } from '../src/modules/programs/program-plan.js';
 import { estimateOneRepMax } from '../src/utils/oneRepMax.js';
@@ -56,6 +57,7 @@ CREATE TABLE ai_messages (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), convers
 const query = async (sql, params) => db.query(sql, params);
 const migration = new MigrationBuilder({ query }, undefined, false, console);
 activeExerciseMigration(migration);
+elapsedMigration(migration);
 await db.exec(migration.getSql());
 const client = { query, release() {} };
 const pool = { connect: async () => client };
@@ -69,6 +71,25 @@ await query('INSERT INTO users (id) VALUES ($1), ($2)', [user, other]);
 await query("INSERT INTO exercises (id, name, tracking) VALUES ($1, 'A', 'weight_reps'), ($2, 'B', 'weight_reps')", [exercise, exerciseB]);
 
 test('server repairs against isolated PostgreSQL', async (t) => {
+  await t.test('week and finale use completed sessions, local calendar dates and replay-safe elapsed time', async () => {
+    const { getWeekOverview } = await loadService('../src/modules/stats/stats.service.js', { query });
+    const sessions = [];
+    for (const [owner, day, status] of [[user,'2026-11-23','completed'],[user,'2026-11-29','completed'],
+      [other,'2026-11-24','completed'],[user,'2026-11-30','completed'],[user,'2026-11-25','planned']]) {
+      const w = await workouts.createWorkout({userId:owner,title:'Week',date:day});
+      sessions.push([w.id,owner]);
+      await query(`INSERT INTO workout_sets (workout_id,exercise_id,is_completed,set_role,weight,reps)
+        VALUES ($1,$2,true,'normal',20,5),($1,$2,true,'warmup',10,5),($1,$2,false,'normal',90,10)`, [w.id,exercise]);
+      await workouts.updateWorkoutStatus(w.id,owner,status,123);
+    }
+    const overview = await getWeekOverview(user,'2026-11-29');
+    assert.equal(overview.sets,4);
+    assert.equal(overview.tonnage,300);
+    assert.equal(overview.muscles[0].sets,2);
+    assert.equal(overview.heaviest.weight,20);
+    assert.equal((await workouts.updateWorkoutStatus(sessions[0][0],user,'completed',300)).elapsed_seconds,123);
+    for (const [w, owner] of sessions) await workouts.deleteWorkout(w,owner);
+  });
   await t.test('active skip and replacement preserve history, ownership, round partners and retry results', async () => {
     const w = await workouts.createWorkout({ userId: user, title: 'Session edits', date: '2026-11-20' });
     const target = id(), privateTarget = id();

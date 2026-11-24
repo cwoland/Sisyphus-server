@@ -1,5 +1,6 @@
+import { z } from 'zod';
 import { asyncHandler } from '../../utils/asyncHandler.js';
-import { getContinuity, getVolume, getVisitStreak, recordVisit } from './stats.service.js';
+import { getWeekOverview, getContinuity, getVolume, getVisitStreak, recordVisit } from './stats.service.js';
 
 export const getStreak = asyncHandler(async (req, res) => {
   const continuity = await getContinuity(req.userId);
@@ -22,4 +23,9 @@ export const getVisits = asyncHandler(async (req, res) => {
 
 export const postVisit = asyncHandler(async (req, res) => {
   res.json(await recordVisit(req.userId, localDate(req)));
+});
+
+export const getWeeklyOverview = asyncHandler(async (req, res) => {
+  const date = z.iso.date().parse(req.query.date);
+  res.json(await getWeekOverview(req.userId, date));
 });

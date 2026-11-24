@@ -70,12 +70,12 @@ export const REACTION_KINDS = ['heart', 'bicep', 'clap'];
 const REACTION_MARK = { heart: '❤️', bicep: '💪', clap: '👏' };
 
 const AUTHOR_SQL = {
-  workout: `SELECT w.user_id AS author_id, w.title AS label FROM workouts w WHERE w.id = $1`,
+  workout: `SELECT w.user_id AS author_id, w.title AS label FROM workouts w WHERE w.id = $1 AND w.status = 'completed'`,
   record: `SELECT pr.user_id AS author_id, e.name AS label
              FROM personal_records pr
              JOIN exercises e ON e.id = pr.exercise_id
             WHERE pr.id = $1`,
-  program: `SELECT p.owner_id AS author_id, p.title AS label FROM programs p WHERE p.id = $1`,
+  program: `SELECT p.owner_id AS author_id, p.title AS label FROM programs p WHERE p.id = $1 AND p.is_public`,
 };
 
 const notifyAuthor = async (reactorId, entityType, entityId, kind) => {
@@ -98,16 +98,28 @@ export const addReaction = async (userId, entityType, entityId, rawKind) => {
   const kind = REACTION_KINDS.includes(rawKind) ? rawKind : 'heart';
 
   const { rows } = await query(
-    `INSERT INTO feed_reactions (user_id, entity_type, entity_id, kind)
-     VALUES ($1, $2, $3, $4)
-     ON CONFLICT (user_id, entity_type, entity_id)
-     DO UPDATE SET kind = EXCLUDED.kind, created_at = now()
-     WHERE feed_reactions.kind IS DISTINCT FROM EXCLUDED.kind
-     RETURNING (xmax = 0) AS inserted`,
-    [userId, entityType, entityId, kind]
+    `WITH target AS (${AUTHOR_SQL[entityType]}),
+     visible AS (
+       SELECT 1 FROM target t WHERE EXISTS (
+         SELECT 1 FROM friendships f WHERE f.status = 'accepted'
+           AND ((f.requester_id = $2 AND f.addressee_id = t.author_id)
+             OR (f.addressee_id = $2 AND f.requester_id = t.author_id))
+       )
+     ), changed AS (
+       INSERT INTO feed_reactions (user_id, entity_type, entity_id, kind)
+       SELECT $2, $3, $1, $4 FROM visible
+       ON CONFLICT (user_id, entity_type, entity_id)
+       DO UPDATE SET kind = EXCLUDED.kind, created_at = now()
+       WHERE feed_reactions.kind IS DISTINCT FROM EXCLUDED.kind
+       RETURNING (xmax = 0) AS inserted
+     )
+     SELECT EXISTS (SELECT 1 FROM visible) AS visible,
+            EXISTS (SELECT 1 FROM changed WHERE inserted) AS inserted`,
+    [entityId, userId, entityType, kind]
   );
 
-  if (rows[0]?.inserted) {
+  if (!rows[0].visible) throw new ApiError(404, 'Событие не найдено');
+  if (rows[0].inserted) {
     runBackground(notifyAuthor(userId, entityType, entityId, kind), 'Reaction push failed');
   }
 

@@ -20,8 +20,8 @@ export const copyOfficial = asyncHandler(async (req, res) => {
   const names = [...new Set(template.days.flatMap((day) => day.exercises.map((ex) => ex.name)))];
   const { rows } = await query(
     `SELECT DISTINCT ON (lower(name)) id, name FROM exercises
-     WHERE lower(name) = ANY($1::text[]) ORDER BY lower(name), created_by NULLS FIRST, id`,
-    [names.map((name) => name.toLowerCase())]
+     WHERE created_by IS NULL AND lower(name) IN (SELECT lower(n) FROM unnest($1::text[]) AS names(n)) ORDER BY lower(name), id`,
+    [names]
   );
   const ids = new Map(rows.map((row) => [row.name.toLowerCase(), row.id]));
   const missing = names.filter((name) => !ids.has(name.toLowerCase()));

@@ -14,7 +14,7 @@ export const getVolumeStats = asyncHandler(async (req, res) => {
 
 const localDate = (req) => {
   const raw = req.body?.date ?? req.query?.date;
-  return /^\d{4}-\d{2}-\d{2}$/.test(raw || '') ? raw : null;
+  return raw == null ? null : z.iso.date().parse(raw);
 };
 
 export const getVisits = asyncHandler(async (req, res) => {

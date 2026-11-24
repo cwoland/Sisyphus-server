@@ -5,7 +5,7 @@ import {
 } from './body.service.js';
 
 const metricSchema = z.object({
-  date: z.string(),
+  date: z.iso.date(),
   weight: z.number().min(20).max(400).nullable().optional(),
   biceps: z.number().min(10).max(100).nullable().optional(),
   chest:  z.number().min(40).max(250).nullable().optional(),

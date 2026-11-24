@@ -2,6 +2,10 @@ import { pool, query } from '../src/config/db.js';
 
 import { techniques } from '../data/exercise-techniques-v1.js';
 
+import { groups } from '../data/exercise-muscles-v1.js';
+
+const details = new Map(groups.flatMap(([muscle, names]) => names.map((name) => [name, muscle])));
+
 const EXERCISES = [
   ['Жим штанги лёжа', 'chest', 'barbell'],
   ['Жим штанги в наклоне вверх', 'chest', 'barbell'],
@@ -87,10 +91,10 @@ const run = async () => {
 
   for (const [name, muscleGroup, equipment] of EXERCISES) {
     const { rowCount } = await query(
-      `INSERT INTO exercises (name, muscle_group, equipment, tracking, technique)
-       SELECT $1::text, $2::text, $3::text, $4::text, $5::text
+      `INSERT INTO exercises (name, muscle_group, equipment, tracking, technique, muscle_detail)
+       SELECT $1::text, $2::text, $3::text, $4::text, $5::text, $6::text
        WHERE NOT EXISTS (SELECT 1 FROM exercises WHERE created_by IS NULL AND lower(name) = lower($1::text))`,
-      [name, muscleGroup, equipment, trackingFor(name, muscleGroup, equipment), techniques[name]]
+      [name, muscleGroup, equipment, trackingFor(name, muscleGroup, equipment), techniques[name], details.get(name)]
     );
     rowCount ? created++ : skipped++;
   }

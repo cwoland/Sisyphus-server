@@ -175,6 +175,7 @@ export const createProgram = async ({
   isPublic,
   kind,
   days,
+  forkedFrom = null,
 }) => {
   const client = await pool.connect();
 
@@ -189,9 +190,10 @@ export const createProgram = async ({
           title,
           description,
           is_public,
-          kind
+          kind,
+          forked_from
         )
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING *
       `,
       [
@@ -200,6 +202,7 @@ export const createProgram = async ({
         description ?? null,
         isPublic ?? false,
         kind ?? 'strength',
+        forkedFrom,
       ]
     );
 
@@ -330,7 +333,8 @@ export const forkProgram = async (programId, userId) => {
 
   return createProgram({
     ownerId: userId,
-    title: `${original.title} (копия)`,
+    title: Array.from(original.title).slice(0, 142).join('') + ' (копия)',
+    forkedFrom: programId,
     description: original.description,
     isPublic: false,
     kind: original.kind,
@@ -345,13 +349,6 @@ export const forkProgram = async (programId, userId) => {
         setPlan: ex.set_plan,
       })),
     })),
-  }).then(async (newProgram) => {
-    await query(
-      `UPDATE programs SET forked_from = $1 WHERE id = $2`,
-      [programId, newProgram.id]
-    );
-
-    return newProgram;
   });
 };
 

@@ -1,3 +1,4 @@
+import { dateRange } from '../../utils/dateRange.js';
 import { z } from 'zod';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import {
@@ -32,7 +33,7 @@ const targetsSchema = z.object({
 });
 
 export const getEntries = asyncHandler(async (req, res) => {
-  const { from, to } = req.query;
+  const { from, to } = dateRange.parse(req.query);
   const entries = await listNutritionEntries(req.userId, { from, to });
   res.json({ entries });
 });
@@ -60,8 +61,7 @@ export const removeEntry = asyncHandler(async (req, res) => {
 });
 
 export const getSummary = asyncHandler(async (req, res) => {
-  const { date } = req.query;
-  if (!date) throw new Error('Параметр date обязателен');
+  const date = z.iso.date().parse(req.query.date);
   const summary = await getDailySummary(req.userId, date);
   res.json({ summary });
 });

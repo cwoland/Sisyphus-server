@@ -30,14 +30,14 @@ CREATE TABLE users (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), settings json
 CREATE TABLE exercises (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text, muscle_group text, muscle_detail text,
  created_by uuid, equipment text, tracking text);
 CREATE TABLE programs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), owner_id uuid REFERENCES users,
- title text, description text, is_public boolean DEFAULT false, kind text, updated_at timestamptz DEFAULT now());
+ title text, description text, is_public boolean DEFAULT false, forked_from uuid REFERENCES programs ON DELETE SET NULL, kind text, updated_at timestamptz DEFAULT now());
 CREATE TABLE program_days (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), program_id uuid REFERENCES programs ON DELETE CASCADE,
  day_index int, title text);
 CREATE TABLE program_exercises (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), program_day_id uuid REFERENCES program_days ON DELETE CASCADE,
  exercise_id uuid REFERENCES exercises, order_index int, target_sets int, target_reps text, notes text, group_index int, set_plan jsonb);
 CREATE TABLE workouts (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid REFERENCES users,
  program_day_id uuid REFERENCES program_days ON DELETE SET NULL, title text, date date, notes text,
- status text DEFAULT 'planned', started_at timestamptz);
+ status varchar(20) DEFAULT 'planned', started_at timestamptz);
 CREATE TABLE workout_sets (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workout_id uuid REFERENCES workouts ON DELETE CASCADE,
  exercise_id uuid REFERENCES exercises, order_index int DEFAULT 0, group_index int DEFAULT 0, round_index int DEFAULT 0,
  weight numeric, reps int, rpe numeric, duration_sec int, is_completed boolean DEFAULT false, set_kind text DEFAULT 'normal',
@@ -71,6 +71,16 @@ await query('INSERT INTO users (id) VALUES ($1), ($2)', [user, other]);
 await query("INSERT INTO exercises (id, name, tracking) VALUES ($1, 'A', 'weight_reps'), ($2, 'B', 'weight_reps')", [exercise, exerciseB]);
 
 test('server repairs against isolated PostgreSQL', async (t) => {
+  await t.test('calendar skip can be retried and restored on the migrated varchar status type', async () => {
+    const w = await workouts.createWorkout({ userId: user, title: 'Calendar', date: '2026-11-23' });
+    await assert.rejects(workouts.updateWorkoutStatus(w.id, other, 'skipped'), { status: 404 });
+    for (const status of ['skipped', 'skipped', 'planned']) {
+      const saved = await workouts.updateWorkoutStatus(w.id, user, status);
+      assert.equal(saved.status, status);
+      assert.equal(saved.started_at, null);
+    }
+    await workouts.deleteWorkout(w.id, user);
+  });
   await t.test('week and finale use completed sessions, local calendar dates and replay-safe elapsed time', async () => {
     const { getWeekOverview } = await loadService('../src/modules/stats/stats.service.js', { query });
     const sessions = [];

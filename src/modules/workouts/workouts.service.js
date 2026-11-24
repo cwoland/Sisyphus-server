@@ -33,7 +33,8 @@ export const listWorkouts = async (userId, { from, to }) => {
 export const getWorkoutWithSets = async (
   workoutId,
   userId,
-  execute = query
+  execute = query,
+  { includeAlternatives = true } = {}
 ) => {
   const { rows: workoutRows } = await execute(
     `
@@ -69,7 +70,7 @@ export const getWorkoutWithSets = async (
     [workoutId]
   );
 
-  if (workout.status === 'in_progress') {
+  if (includeAlternatives && workout.status === 'in_progress') {
     // The PWA persists the entire workout detail. Include the compact catalog
     // so that choosing a replacement does not require another request in the gym.
     const { rows: alternatives } = await execute(
@@ -648,10 +649,10 @@ export const updateWorkoutStatus = async (
     const { rows } = await client.query(
       `
         UPDATE workouts
-        SET status = $1,
-            elapsed_seconds = CASE WHEN $1 = 'completed'
+        SET status = $1::varchar,
+            elapsed_seconds = CASE WHEN $1::varchar = 'completed'
               THEN COALESCE(elapsed_seconds, $4::integer) END,
-            started_at = CASE WHEN $1 = 'planned' THEN NULL ELSE started_at END
+            started_at = CASE WHEN $1::varchar IN ('planned', 'skipped') THEN NULL ELSE started_at END
         WHERE id = $2 AND user_id = $3
         RETURNING *
       `,

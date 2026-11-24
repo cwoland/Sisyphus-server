@@ -1,3 +1,4 @@
+import { dateRange } from '../../utils/dateRange.js';
 import { z } from 'zod';
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { changeActiveExercise } from './exercise-change.service.js';
@@ -71,7 +72,7 @@ const setSchema = z.object({
   .refine((s) => s.setKind !== 'drop' || s.parentSetId, 'Дроп должен иметь основной подход');
 
 export const getWorkouts = asyncHandler(async (req, res) => {
-  const { from, to } = req.query;
+  const { from, to } = dateRange.parse(req.query);
   const workouts = await listWorkouts(req.userId, { from, to });
   res.json({ workouts });
 });

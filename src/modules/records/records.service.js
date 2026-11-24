@@ -15,8 +15,12 @@ export const listPersonalRecords = async (userId) => {
 
 export const getExerciseHistory = async (userId, exerciseId, { limit = 200 } = {}) => {
   const { rows: exerciseRows } = await query(
-    `SELECT id, name, muscle_group, equipment FROM exercises WHERE id = $1`,
-    [exerciseId]
+    `SELECT id, name, muscle_group, equipment FROM exercises e WHERE id = $1
+        AND (e.created_by IS NULL OR e.created_by = $2 OR EXISTS (
+          SELECT 1 FROM workout_sets s JOIN workouts w ON w.id = s.workout_id
+          WHERE s.exercise_id = e.id AND w.user_id = $2
+        ))`,
+    [exerciseId, userId]
   );
   const exercise = exerciseRows[0];
   if (!exercise) throw new ApiError(404, 'Упражнение не найдено');
@@ -27,6 +31,7 @@ export const getExerciseHistory = async (userId, exerciseId, { limit = 200 } = {
        FROM workout_sets ws
        JOIN workouts w ON w.id = ws.workout_id
       WHERE w.user_id = $1
+        AND w.status IN ('completed', 'in_progress')
         AND ws.exercise_id = $2
         AND ws.is_completed = true
         AND (ws.reps IS NOT NULL OR ws.duration_sec IS NOT NULL)

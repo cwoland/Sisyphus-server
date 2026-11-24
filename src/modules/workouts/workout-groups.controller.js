@@ -180,11 +180,6 @@ export const changeWorkoutGroup = asyncHandler(async (req, res) => {
 
     const splitSecondGroup = maxGroup + 1;
 
-    const plannedRest = [...secondSets, ...firstSets]
-      .reverse()
-      .find((set) => set.rest_after_sec != null)
-      ?.rest_after_sec ?? 120;
-
     const updateExercise = async (
       exerciseSets,
       groupIndex,
@@ -200,7 +195,7 @@ export const changeWorkoutGroup = asyncHandler(async (req, res) => {
         const restAfter =
           action === 'link' && isFirstInSuperset
             ? 0
-            : plannedRest;
+            : secondSets[roundIndex]?.rest_after_sec ?? firstSets[roundIndex]?.rest_after_sec ?? 120;
 
         await client.query(
           `

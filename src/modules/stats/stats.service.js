@@ -95,6 +95,7 @@ export const getVolume = async (userId, { weeks = 12 } = {}) => {
         WHERE w.user_id = $1
           AND w.status = 'completed'
           AND ws.is_completed = true
+          AND w.date < date_trunc('week', CURRENT_DATE)::date + 7
           AND w.date >= b.from_week
         GROUP BY 1
      )
@@ -118,6 +119,7 @@ export const getVolume = async (userId, { weeks = 12 } = {}) => {
       WHERE w.user_id = $1
         AND w.status = 'completed'
         AND ws.is_completed = true
+        AND w.date < date_trunc('week', CURRENT_DATE)::date + 7
         AND w.date >= (date_trunc('week', CURRENT_DATE) - (($2 - 1) || ' weeks')::interval)::date
       GROUP BY e.muscle_group
       ORDER BY sets DESC`,
@@ -142,6 +144,7 @@ export const getVolume = async (userId, { weeks = 12 } = {}) => {
      WHERE w.user_id = $1
        AND w.status = 'completed'
        AND ws.is_completed = true
+       AND w.date < date_trunc('week', CURRENT_DATE)::date + 7
        AND w.date >= b.prev_from`,
     [userId, span]
   );
@@ -172,7 +175,7 @@ SELECT CASE WHEN $2::date BETWEEN CURRENT_DATE - 1 AND CURRENT_DATE + 1
 export const getVisitStreak = async (userId, localDate = null) => {
   const { rows } = await query(
     `WITH d AS (${TODAY}),
-     visits AS (SELECT visit_date FROM user_visits WHERE user_id = $1),
+     visits AS (SELECT visit_date FROM user_visits, d WHERE user_id = $1 AND visit_date <= d.today),
      numbered AS (SELECT visit_date, row_number() OVER (ORDER BY visit_date) AS rn FROM visits),
      islands AS (SELECT visit_date, (visit_date - (rn || ' days')::interval)::date AS grp FROM numbered),
      runs AS (SELECT min(visit_date) AS started, max(visit_date) AS ended, count(*)::int AS len

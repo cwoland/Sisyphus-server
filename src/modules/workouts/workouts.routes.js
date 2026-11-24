@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { authGuard } from '../../middlewares/auth.middleware.js';
 
 import {
@@ -22,6 +23,13 @@ import { changeWorkoutGroup } from './workout-groups.controller.js';
 const router = Router();
 
 router.use(authGuard);
+
+const validateId = (_req, _res, next, value) => {
+  const result = z.guid().safeParse(value);
+  next(result.success ? undefined : result.error);
+};
+router.param('id', validateId);
+router.param('setId', validateId);
 
 router.get('/', getWorkouts);
 router.get('/active', getActive);

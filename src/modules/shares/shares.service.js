@@ -99,7 +99,7 @@ export const getShare = async (shareId, userId) => {
   }
 
   if (share.workout_id) {
-    const workout = await getWorkoutWithSets(share.workout_id, share.from_user_id);
+    const workout = await getWorkoutWithSets(share.workout_id, share.from_user_id, query, { includeAlternatives: false });
     return { share, kind: 'workout', workout };
   }
 
